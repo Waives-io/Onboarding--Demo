@@ -9,8 +9,9 @@
 <label>כתובת דוא״ל<input name="email" type="email" autocomplete="email" required maxlength="254" dir="ltr"></label>
 <label>מספר לקוח שקיבלתם מהמשרד<input name="client_reference" required maxlength="64" pattern="[A-Za-z0-9_-]{1,64}" dir="ltr" placeholder="לדוגמה: DEMO-001"><small>המשרד בודק את השיוך לפני עדכון התיק.</small></label>
 <label>חודש החומרים<input name="period" type="month" required dir="ltr"></label>
-<label class="wide">סוג החומר<select name="document_type" required><option value="">בחרו סוג מסמך</option value="expenses">מסמכי הוצאות</option><option value="sales_report">דוח מכירות</option><option value="bank_statement">תדפיס בנק</option></select></label>
-<label class="wide file-box">צירוף קבצים<input id="files" name="files" type="file" accept=".pdf,.jpg,.jpeg,.png" multiple required><small>PDF, JPG או PNG · עד 5 קבצים · עד 4MB בסך הכול בכל שליחה</small></label>
+<label class="wide">סוג החומר<select name="document_type" required><option value="">בחרו סוג מסמך</option><option value="expenses">מסמכי הוצאות</option><option value="sales_report">דוח מכירות</option><option value="bank_statement">תדפיס בנק</option></select></label>
+<label class="wide">קוד גישה לדמו<input name="invite_code" type="password" autocomplete="off" required minlength="24" maxlength="128" dir="ltr"><small>קוד הבדיקה שקיבלתם מהמשרד. הקוד אינו נשמר בשיטס.</small></label>
+<label class="wide file-box">צירוף קובץ<input id="files" name="files" type="file" accept=".pdf,.jpg,.jpeg,.png" required><small>קובץ PDF, JPG או PNG אחד בכל שליחה · עד 4MB</small></label>
 <ul id="file-list" class="wide" aria-live="polite"></ul>
 <label class="wide">הערה למשרד <span class="muted">(לא חובה)</span><textarea name="note" rows="3" maxlength="1000"></textarea></label>
 <label class="wide check"><input name="requirement_complete" type="checkbox"><span>סיימתי להעלות את כל החומר מהסוג הזה לחודש שבחרתי.<small>אם נשארו קבצים נוספים, השאירו את התיבה לא מסומנת.</small></span></label>
