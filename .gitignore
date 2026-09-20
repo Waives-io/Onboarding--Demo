@@ -1,3 +1,3 @@
-.netlify/
-netlify-public/
 node_modules/
+.wrangler/
+.dev.vars*

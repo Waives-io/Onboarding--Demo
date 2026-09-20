@@ -1,0 +1,9 @@
+{
+  "name": "waives-onboarding-intake",
+  "main": "worker/intake.mjs",
+  "compatibility_date": "2026-09-19",
+  "workers_dev": true,
+  "secrets": {
+    "required": ["MAKE_WEBHOOK_URL", "INTAKE_DEMO_CODE"]
+  }
+}

@@ -1,6 +1,0 @@
-[build]
-  command = "node build-api.mjs"
-  publish = "netlify-public"
-
-[functions]
-  directory = "netlify/functions"
