@@ -123,7 +123,7 @@ export default {
     forward.set('file_1', file, file.name);
     try {
       const response = await fetch(target, {
-        method: 'POST', body: forward, redirect: 'error', signal: AbortSignal.timeout(25_000),
+        method: 'POST', body: forward, redirect: 'manual', signal: AbortSignal.timeout(25_000),
       });
       if (!response.ok) return json(502, { error: 'upstream_rejected', submission_id: id }, origin);
       let receipt;
