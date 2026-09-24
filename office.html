@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://127.0.0.1:8787 https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev; img-src 'self' data:; object-src 'none'; base-uri 'self'">
+  <title>התיק מוכן · סביבת המשרד</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="portal.css">
+</head>
+<body>
+  <div class="demo-bar">סביבת הדגמה · נתונים ומסמכים פיקטיביים בלבד</div>
+  <header>
+    <a class="brand" href="office.html"><span class="brand-mark">✓</span><span><strong>התיק מוכן<span class="brand-dot">.</span></strong><small>מרכז המסמכים של המשרד</small></span></a>
+    <nav aria-label="ניווט ראשי"><button data-view="cases" class="active">מקרים</button><button data-view="clients">לקוחות</button><button data-view="catalog">מסמכים ותבניות</button></nav>
+    <button id="logout" hidden>יציאה</button>
+  </header>
+  <main id="app"><p role="status">טוען את סביבת המשרד…</p></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="modal"></dialog>
+  <script src="portal-config.js"></script>
+  <script type="module" src="office.mjs"></script>
+</body>
+</html>

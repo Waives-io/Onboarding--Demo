@@ -1,9 +1,38 @@
 <!doctype html>
-<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Onboarding-Demo — נועה ושות׳</title><meta name="description" content="דמו אינטראקטיבי לאיסוף חומרים ומעקב עבור משרד רואי חשבון"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%230c7778'/%3E%3Cpath d='m10 20 7 7 14-15' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E"><link rel="stylesheet" href="style.css"></head><body>
-<div class="demo-bar"><span><b>סביבת הדגמה</b> · לקוחות פיקטיביים · לא נשלחות הודעות ולא נשמרים קבצים</span><button id="reset">איפוס הדמו ↺</button></div>
-<header><a class="brand" href="#"><span class="brand-mark">✓</span><span><strong dir="ltr">Onboarding-Demo</strong><small>נועה ושות׳ · משרד רואי חשבון</small></span></a><nav aria-label="תצוגה"><button id="office-tab" class="active" aria-pressed="true">סביבת המשרד</button><button id="client-tab" aria-pressed="false">תצוגת הלקוח</button></nav><div class="profile"><span class="avatar">נ</span><span>נועה לוי<small>מנהלת המשרד</small></span></div></header>
-<main id="app"></main><div id="toast" role="status" aria-live="polite"></div>
-<dialog id="reminder"><form method="dialog"><button class="close" aria-label="סגירה">×</button></form><span class="eyebrow">תזכורת אישית · הדמיה</span><h2>מבקשים רק את מה שחסר.</h2><div id="message" class="message"></div><p class="muted">ההודעה תתווסף ליומן ההדגמה בלבד. לא יישלח מייל.</p><button id="send-reminder" class="primary">הדמיית שליחת תזכורת</button></dialog>
-<dialog id="reset-dialog"><h2>להתחיל את ההדגמה מחדש?</h2><p>הלקוחות והמסמכים יחזרו למצב ההתחלתי.</p><div class="actions"><button id="confirm-reset" class="primary">כן, לאפס</button><button id="cancel-reset">ביטול</button></div></dialog>
-<script src="app.js"></script></body></html>
-
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="התיק מוכן — איסוף ומעקב אחר מסמכי לקוחות למשרדי רואי חשבון">
+  <title>התיק מוכן · מרכז המסמכים של המשרד</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%230c7778'/%3E%3Cpath d='m10 20 7 7 14-15' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="portal.css">
+</head>
+<body>
+  <div class="demo-bar">סביבת הדגמה · משתמשים בפרטים ובמסמכים פיקטיביים בלבד</div>
+  <header>
+    <a class="brand" href="index.html"><span class="brand-mark">✓</span><span><strong>התיק מוכן<span class="brand-dot">.</span></strong><small>מרכז המסמכים של המשרד</small></span></a>
+  </header>
+  <main class="client-page">
+    <section class="welcome">
+      <span class="eyebrow">דמו עובד למשרד רואי חשבון</span>
+      <h1>כל לקוח פעם אחת.<br>כל טיפול כמקרה משלו.</h1>
+      <p>פותחים מקרה, מגדירים את רשימת המסמכים, משתפים קישור אישי ועוקבים עד שהתיק מוכן לעבודה.</p>
+      <div class="actions">
+        <a class="primary" href="office.html">כניסה לסביבת המשרד</a>
+        <a href="upload.html">טופס הקליטה המקורי</a>
+      </div>
+    </section>
+    <section class="panel card">
+      <h2>מה אפשר לבדוק בדמו</h2>
+      <div class="stats">
+        <div class="stat"><span>לקוחות</span><strong>רשומה אחת</strong><small>גם כשיש כמה מקרים</small></div>
+        <div class="stat"><span>מקרים</span><strong>מעקב נפרד</strong><small>תקופה, דרישות וסטטוס</small></div>
+        <div class="stat"><span>מסמכים</span><strong>גרסאות ובדיקה</strong><small>כולל בקשת תיקון</small></div>
+        <div class="stat"><span>תזכורות</span><strong>רק מה שחסר</strong><small>נוסח מוכן לשליחה ידנית</small></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
