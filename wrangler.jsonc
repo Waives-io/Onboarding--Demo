@@ -1,9 +1,19 @@
 {
   "name": "waives-onboarding-intake",
-  "main": "worker/intake.mjs",
+  "main": "worker/portal.mjs",
   "compatibility_date": "2026-09-19",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "files-readiness-demo",
+    "database_id": "d28d6acc-a8a9-468c-a0f7-b6785b995f38",
+    "migrations_dir": "migrations"
+  }],
+  "vars": {
+    "PORTAL_BRIDGE_ENABLED": "true"
+  },
   "secrets": {
-    "required": ["MAKE_WEBHOOK_URL", "INTAKE_DEMO_CODE"]
+    "required": ["MAKE_WEBHOOK_URL", "INTAKE_DEMO_CODE", "OFFICE_CODE", "PORTAL_LINK_KEY", "MAKE_BRIDGE_KEY"]
   }
 }
