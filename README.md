@@ -28,6 +28,8 @@
 | `upload_document_revision` | העלאה לתיקיית הדרישה הקיימת, הוספת שורת גרסה והחזרת אישור |
 | `lookup_submission` | חיפוש לפי `submission_id` והחזרת אישור קיים לצורך התאוששות |
 
+כש־Make יודע בוודאות שהקובץ לא נשמר, הוא מחזיר `{"status":"failed","submission_id":...}`. אם `lookup_submission` לא מוצא את ההגשה, הוא מחזיר `{"status":"not_found","submission_id":...}`. בשני המקרים ההעלאה מסומנת `failed` והלקוח יכול להעלות שוב. העלאה שנשארת `pending` יותר מ־15 דקות משתחררת אוטומטית ומסומנת `failed`. אם אישור שמירה מגיע אחר כך, הקובץ נרשם כ־`stored` בלי לשנות את סטטוס הדרישה.
+
 העמודות הפעילות בגיליון `Submissions` הן A:O: `submission_id`, `submitted_at`, `client_reference`, `full_name`, `email`, `period`, `document_type`, `requirement_complete`, `file_count`, `processing_status`, `drive_file_ids`, `review_note`, `test_mode`, `note`, `last_updated_at`.
 
 ## מודל הנתונים
