@@ -151,6 +151,9 @@ test('office reconcile marks a lost upload failed and unblocks the client', asyn
   assert.equal(lost.body.status, 'pending');
   assert.equal((await upload(e, 'req-a')).body.error, 'upload_pending');
   mode = 'up';
+  const early = await call(e, '/api/cases/case1/reconcile', { method: 'POST', data: { submission_id: lost.submission_id }, office: true });
+  assert.deepEqual(early.body, { ok: true, state: 'pending' });
+  db.raw.prepare('UPDATE uploads SET created_at=? WHERE submission_id=?').run(new Date(Date.now() - 3 * 60000).toISOString(), lost.submission_id);
   const rec = await call(e, '/api/cases/case1/reconcile', { method: 'POST', data: { submission_id: lost.submission_id }, office: true });
   assert.deepEqual(rec.body, { ok: true, state: 'failed' });
   const next = await upload(e, 'req-a', undefined, 'two');
