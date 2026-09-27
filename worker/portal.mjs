@@ -11,6 +11,25 @@ const event=(db,id,action,detail='')=>stmt(db,'INSERT INTO events(event_id,case_
 function reply(body,status=200,origin='') { return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Vary':'Origin',...(origin?{'Access-Control-Allow-Origin':origin}:{})}}); }
 async function body(req) { requireThat(Number(req.headers.get('content-length')||0)<=1000000,'too_large',413); try{return await req.json();}catch{throw new HttpError(400,'invalid_json');} }
 function active(c) {requireThat(!['closed','archived'].includes(c.status),'case_closed',409);}
+// A pending upload older than this never got a receipt. Make times out after 25s, so it is safe to release the lock.
+const PENDING_TTL_MS=15*60000;
+function expirePending(db,caseId) {
+ const cutoff=new Date(Date.now()-PENDING_TTL_MS).toISOString(),stale="state='pending' AND created_at<? AND requirement_id IN (SELECT requirement_id FROM requirements WHERE case_id=?)";
+ return db.batch([
+ stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT lower(hex(randomblob(16))),?,'upload_failed',filename FROM uploads WHERE ${stale}`,caseId,cutoff,caseId),
+ stmt(db,`UPDATE uploads SET state='failed' WHERE ${stale}`,cutoff,caseId)
+ ]);
+}
+function markFailed(db,caseId,u) {
+ return db.batch([
+ stmt(db,"INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,'upload_failed',filename FROM uploads WHERE submission_id=? AND state='pending'",uid(),caseId,u.submission_id),
+ stmt(db,"UPDATE uploads SET state='failed' WHERE submission_id=? AND state='pending'",u.submission_id)
+ ]);
+}
+// Make answers with this only when it knows the file was not stored (lookup miss or explicit failure).
+// A lookup miss for a very recent upload may just mean Make is still running it.
+const LOOKUP_GRACE_MS=2*60000;
+const failedReceipt=(receipt,u)=>['failed','not_found'].includes(receipt?.status)&&receipt.submission_id===u.submission_id;
 function syncCase(db,id) {
  return stmt(db,`UPDATE cases SET status=CASE
  WHEN status IN ('closed','archived') THEN status
@@ -55,11 +74,15 @@ async function caseStatements(db,b,env) {
  for(const [i,r] of items.entries()) {const max=Number(r.max_files||1);requireThat(Number.isInteger(max)&&max>=1&&max<=20);statements.push(stmt(db,'INSERT INTO requirements(requirement_id,case_id,document_id,name,required,max_files,position) VALUES (?,?,?,?,?,?,?)',uid(),id,r.document_id||null,clean(r.name,160,true),r.required?1:0,max,i));}
  statements.push(event(db,id,'case_created'));return {id,token,statements};
 }
-async function make(env,payload) {
+function bridge(env) {
  const url=new URL(env.LOCAL_BRIDGE_URL||env.MAKE_WEBHOOK_URL||'https://invalid.invalid');
  const localBridge=env.LOCAL_BRIDGE_URL && ['127.0.0.1','localhost'].includes(url.hostname) && url.protocol==='http:';
  requireThat((localBridge || url.protocol==='https:' && /^hook(?:\.[a-z0-9-]+)?\.make\.com$/.test(url.hostname)) && !url.search && !url.hash && !url.username,'not_configured',503);
  requireThat(env.MAKE_BRIDGE_KEY?.length>=32 && env.PORTAL_BRIDGE_ENABLED==='true','integration_not_ready',503);
+ return url;
+}
+async function make(env,payload) {
+ const url=bridge(env);
  payload.set('bridge_key',env.MAKE_BRIDGE_KEY);payload.set('schema_version','2');payload.set('test_mode','true');
  const response=await fetch(url,{method:'POST',body:payload,redirect:'manual',signal:AbortSignal.timeout(25000)});
  requireThat(response.ok,'storage_unconfirmed',502);try{return await response.json();}catch{throw new HttpError(502,'storage_unconfirmed');}
@@ -67,14 +90,22 @@ async function make(env,payload) {
 async function storeReceipt(db,u,receipt) {
  requireThat(receipt.status==='stored' && receipt.submission_id===u.submission_id && /^[\w-]{5,200}$/.test(receipt.drive_file_id||'') && /^[\w-]{5,200}$/.test(receipt.drive_folder_id||'') && receipt.sheet_updated===true,'storage_unconfirmed',502);
  if(u.state==='stored'){requireThat(u.drive_file_id===receipt.drive_file_id,'receipt_conflict',409);return;}
- const r=await one(db,'SELECT * FROM requirements WHERE requirement_id=?',u.requirement_id);
- const completedAfterCorrection=r.status==='correction';
+ const r=await one(db,'SELECT requirement_id,case_id FROM requirements WHERE requirement_id=?',u.requirement_id),sid=u.submission_id;
+ // Two receipts for one submission (Make callback and Make response) can race. Every status change is guarded
+ // on the upload still being pending inside the same transaction, and the upload row flips last, so only one wins.
+ // A late receipt for a failed upload records the file but leaves requirement and case status alone.
+ const pending="EXISTS(SELECT 1 FROM uploads WHERE submission_id=? AND state='pending')",failed="EXISTS(SELECT 1 FROM uploads WHERE submission_id=? AND state='failed')";
  await db.batch([
- stmt(db,"UPDATE uploads SET state='stored',drive_file_id=?,drive_folder_id=?,stored_at=? WHERE submission_id=? AND state='pending'",receipt.drive_file_id,receipt.drive_folder_id,now(),u.submission_id),
- stmt(db,"UPDATE requirements SET status='uploaded',correction_message='',drive_folder_id=coalesce(drive_folder_id,?) WHERE requirement_id=?",receipt.drive_folder_id,r.requirement_id),
- stmt(db,'UPDATE cases SET drive_folder_id=coalesce(drive_folder_id,?),client_completed_at=?,completed_at=NULL WHERE case_id=?',receipt.drive_folder_id,completedAfterCorrection?now():null,r.case_id),
- syncCase(db,r.case_id),event(db,r.case_id,'upload_stored',u.filename)
+ stmt(db,`UPDATE requirements SET status='uploaded',correction_message='' WHERE requirement_id=? AND ${pending}`,r.requirement_id,sid),
+ stmt(db,'UPDATE requirements SET drive_folder_id=coalesce(drive_folder_id,?) WHERE requirement_id=?',receipt.drive_folder_id,r.requirement_id),
+ stmt(db,`UPDATE cases SET completed_at=NULL WHERE case_id=? AND ${pending}`,r.case_id,sid),
+ stmt(db,'UPDATE cases SET drive_folder_id=coalesce(drive_folder_id,?) WHERE case_id=?',receipt.drive_folder_id,r.case_id),
+ syncCase(db,r.case_id),
+ stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,CASE WHEN ${pending} THEN 'upload_stored' ELSE 'upload_stored_late' END,? WHERE ${pending} OR ${failed}`,uid(),r.case_id,sid,u.filename,sid,sid),
+ stmt(db,"UPDATE uploads SET state='stored',drive_file_id=?,drive_folder_id=?,stored_at=? WHERE submission_id=? AND state IN ('pending','failed')",receipt.drive_file_id,receipt.drive_folder_id,now(),sid)
  ]);
+ const after=await one(db,'SELECT state,drive_file_id FROM uploads WHERE submission_id=?',sid);
+ requireThat(after.state==='stored'&&after.drive_file_id===receipt.drive_file_id,'receipt_conflict',409);
 }
 async function handle(req,env) {
  const path=new URL(req.url).pathname,method=req.method,db=env.DB;
@@ -94,7 +125,7 @@ async function handle(req,env) {
  }
  if(path.startsWith('/api/portal')) {
  const c=await portal(req,db);
- if(path==='/api/portal'&&method==='GET')return caseView(db,c.case_id);
+ if(path==='/api/portal'&&method==='GET'){await expirePending(db,c.case_id);return caseView(db,c.case_id);}
  active(c);
  if(path==='/api/portal/complete'&&method==='POST') {
  const missing=await one(db,"SELECT count(*) AS n FROM requirements WHERE case_id=? AND (status='correction' OR (required=1 AND status NOT IN ('uploaded','approved')))",c.case_id);
@@ -102,25 +133,34 @@ async function handle(req,env) {
  await db.batch([stmt(db,'UPDATE cases SET client_completed_at=? WHERE case_id=?',now(),c.case_id),syncCase(db,c.case_id),event(db,c.case_id,'client_completed')]);return caseView(db,c.case_id);
  }
  if(path==='/api/portal/uploads'&&method==='POST') {
- requireThat(env.PORTAL_BRIDGE_ENABLED==='true','integration_not_ready',503);
+ bridge(env);
  requireThat(Number(req.headers.get('content-length')||0)<=4500000,'too_large',413);
  let form;try{form=await req.formData();}catch{throw new HttpError(400,'invalid_form');}
- const rid=form.get('requirement_id'),submission=form.get('submission_id');
+ const rid=form.get('requirement_id');let submission=form.get('submission_id');
  requireThat(typeof submission==='string'&&/^[0-9a-f-]{36}$/.test(submission),'invalid_submission_id');
  const r=await one(db,'SELECT * FROM requirements WHERE requirement_id=? AND case_id=?',rid,c.case_id);requireThat(r,'not_found',404);
  const file=form.get('file'),f=await validateFile(file);
+ await expirePending(db,c.case_id);
  const prior=await one(db,'SELECT * FROM uploads WHERE submission_id=?',submission);
- if(prior){requireThat(prior.requirement_id===rid&&prior.content_hash===f.contentHash,'submission_conflict',409);return {submission_id:submission,status:prior.state, retry_safe:false};}
+ if(prior){requireThat(prior.requirement_id===rid&&prior.content_hash===f.contentHash,'submission_conflict',409);if(prior.state!=='failed')return {submission_id:submission,status:prior.state, retry_safe:false};
+ // A failed attempt keeps its id so a late receipt can only ever match that attempt. The retry is a new submission.
+ submission=uid();}
  requireThat(r.status!=='approved','already_approved',409);
  const count=await one(db,"SELECT count(*) n FROM uploads WHERE requirement_id=? AND state='stored'",rid);
  requireThat(r.status==='correction'||count.n<r.max_files,'max_files',409);
  const pending=await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",rid);requireThat(!pending,'upload_pending',409);
  const version=(await one(db,'SELECT coalesce(max(version),0)+1 AS n FROM uploads WHERE requirement_id=?',rid)).n;
- try{await stmt(db,'INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version) VALUES (?,?,?,?,?,?,?)',submission,rid,f.filename,f.mime,f.size,f.contentHash,version).run();}catch{throw new HttpError(409,'upload_pending');}
+ // The approval check is repeated inside the insert so an approval that lands after the reads above wins.
+ // The upload_pending_lock index allows one pending upload per requirement.
+ let claimed;try{claimed=(await stmt(db,"INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM requirements WHERE requirement_id=? AND status!='approved')",submission,rid,f.filename,f.mime,f.size,f.contentHash,version,rid).run()).meta.changes===1;}catch{throw new HttpError(409,'upload_pending');}
+ requireThat(claimed,'already_approved',409);
  const u=await one(db,'SELECT * FROM uploads WHERE submission_id=?',submission);
  const payload=new FormData();for(const [k,v]of Object.entries({action:r.drive_folder_id?'upload_document_revision':'upload_document',submission_id:submission,client_id:c.client_id,client_reference:c.client_reference,full_name:c.client_name,email:c.client_email,case_id:c.case_id,requirement_id:rid,requirement_name:r.name,reporting_period:c.reporting_period,version:String(version),filename:f.filename,content_hash:f.contentHash,requirement_folder_id:r.drive_folder_id||'',note:r.drive_folder_id||''}))payload.set(k,v);
  payload.set('file_1',file,f.filename);
- try{await storeReceipt(db,u,await make(env,payload));return {submission_id:submission,status:'stored'};}catch{return {submission_id:submission,status:'pending',message:'ממתין לאישור שמירה. אין להעלות שוב.'};}
+ const waiting={submission_id:submission,status:'pending',message:'ממתין לאישור שמירה. אין להעלות שוב.'};
+ let receipt;try{receipt=await make(env,payload);}catch{return waiting;}
+ if(failedReceipt(receipt,u)){await markFailed(db,c.case_id,u);throw new HttpError(502,'storage_failed');}
+ try{await storeReceipt(db,u,receipt);return {submission_id:submission,status:'stored'};}catch{return waiting;}
  }
  throw new HttpError(404,'not_found');
  }
@@ -136,13 +176,13 @@ async function handle(req,env) {
  if(path==='/api/templates'&&method==='POST'){const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40);const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)];for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,r.document_id,r.required?1:0,r.max_files,i));}await db.batch(statements);return {template_id:id};}
  const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|review|status|reminder|reconcile))?$/);
  if(match){const id=match[1],action=match[2],c=await one(db,'SELECT * FROM cases WHERE case_id=?',id);requireThat(c,'not_found',404);
- if(!action&&method==='GET')return caseView(db,id,true);
+ if(!action&&method==='GET'){await expirePending(db,id);return caseView(db,id,true);}
  if(action==='link'&&method==='GET')return {link:SITE+'client.html#'+await caseToken(id,env.PORTAL_LINK_KEY)};
  if(action==='status'&&method==='POST'){const b=await body(req);requireThat(['closed','archived','reopen'].includes(b.status));await db.batch([stmt(db,'UPDATE cases SET status=?,closed_at=? WHERE case_id=?',b.status==='reopen'?'collecting':b.status,b.status==='reopen'?null:now(),id),syncCase(db,id),event(db,id,'case_status',b.status)]);return {ok:true};}
  active(c);
- if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'';await db.batch([stmt(db,'UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=?',b.status,message,r.requirement_id),...(b.status==='correction'?[stmt(db,'UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=?',id)]:[]),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id),event(db,id,b.status,r.name+(message?': '+message:''))]);return caseView(db,id,true);}
+ if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle="NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending')",rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,?,? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),rq),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=? AND ${idle}`,b.status,message,rq,rq),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
  if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),missing=view.requirements.filter(r=>['missing','correction'].includes(r.status));requireThat(missing.length,'nothing_missing',409);const link=SITE+'client.html#'+await caseToken(id,env.PORTAL_LINK_KEY);const text=`שלום ${view.client_name},\nלהשלמת ${view.name} (${view.reporting_period}) נדרשים:\n${missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')}\nתאריך יעד: ${view.due_date}\nלהעלאת המסמכים: ${link}`;await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', ')).run();return {text,link,email:view.email,phone:view.phone,subject:'השלמת מסמכים — '+view.name};}
- if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);await storeReceipt(db,u,receipt);return {ok:true};}
+ if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
  if(path==='/api/csv/export'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
  if(path==='/api/csv/import'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const rows=parseCSV(b.csv),errors=[],statements=[],seen=new Set();for(const [i,r]of rows.entries()){try{if(b.entity==='clients'){clientFields(r);requireThat(!seen.has(r.reference)&&!await one(db,'SELECT client_id FROM clients WHERE reference=?',r.reference),'duplicate_reference',409);seen.add(r.reference);statements.push(insertClient(db,uid(),r));}else{requireThat(r.template_id,'template_required');requireThat(!r.case_id||!seen.has(r.case_id),'duplicate_case',409);if(r.case_id){requireThat(!await one(db,'SELECT case_id FROM cases WHERE case_id=?',r.case_id),'duplicate_case',409);seen.add(r.case_id);}const x=await caseStatements(db,r,env);statements.push(...x.statements);}}catch(e){errors.push({row:i+2,error:e.message});}}if(errors.length)return {imported:0,errors};requireThat(rows.length<=40,'import_limit_40');await db.batch(statements);return {imported:rows.length,errors:[]};}
