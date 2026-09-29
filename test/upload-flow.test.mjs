@@ -6,7 +6,7 @@ import { d1 } from './support.mjs';
 
 const SITE = 'https://waives-io.github.io';
 const CASE_TOKEN = 'c'.repeat(64);
-const OFFICE_TOKEN = 'o'.repeat(64);
+const OFFICE_TOKEN = 'e'.repeat(64);
 const env = db => ({
   DB: db, PORTAL_BRIDGE_ENABLED: 'true', MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test',
   MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_LINK_KEY: 'l'.repeat(32),
@@ -18,7 +18,8 @@ async function seed(requirements = [{ id: 'req-a', required: 1, max: 1 }]) {
   db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,token_hash) VALUES ('case1','cl1','Monthly','custom','2026-08','2026-10-01',?)").run(await hash(CASE_TOKEN));
   for (const [i, r] of requirements.entries())
     db.raw.prepare('INSERT INTO requirements(requirement_id,case_id,name,required,max_files,position) VALUES (?,?,?,?,?,?)').run(r.id, 'case1', r.id, r.required, r.max, i);
-  db.raw.prepare('INSERT INTO sessions VALUES (?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000);
+  db.raw.prepare("INSERT INTO staff(staff_id,name,email,role,pw) VALUES ('admin1','Admin','admin@x.test','admin','-')").run();
+  db.raw.prepare('INSERT INTO sessions(token_hash,expires_at,staff_id) VALUES (?,?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000, 'admin1');
   return db;
 }
 

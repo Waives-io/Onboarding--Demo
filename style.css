@@ -175,3 +175,4 @@ label:has(input[required]),label:has(select[required]),label:has(textarea[requir
 @media(max-width:400px){.filters,.form-grid{grid-template-columns:1fr}.filters>*{grid-column:1}.meta-grid{grid-template-columns:1fr}.file-list li{flex-direction:column}}
 
 
+.session-actions{display:flex;gap:8px;align-items:center}

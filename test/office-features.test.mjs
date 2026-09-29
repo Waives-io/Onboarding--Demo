@@ -5,7 +5,7 @@ import { hash, caseToken, localDate } from '../worker/domain.mjs';
 import { d1 } from './support.mjs';
 
 const SITE = 'https://waives-io.github.io';
-const OFFICE_TOKEN = 'o'.repeat(64);
+const OFFICE_TOKEN = 'e'.repeat(64);
 const KEY = 'l'.repeat(32);
 const env = db => ({ DB: db, PORTAL_LINK_KEY: KEY, PORTAL_BRIDGE_ENABLED: 'true' });
 const addDays = n => { const d = new Date(localDate() + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -16,7 +16,8 @@ async function seed({ phone = '050-123-4567', due = addDays(30) } = {}) {
   db.raw.prepare("INSERT INTO clients(client_id,name,reference) VALUES ('cl2','Other','R2')").run();
   db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,token_hash) VALUES ('case1','cl1','Monthly','custom','2026-08',?,?)").run(due, await hash(await caseToken('case1', KEY)));
   db.raw.prepare("INSERT INTO requirements(requirement_id,case_id,name,required,max_files,position) VALUES ('r1','case1','Bank',1,1,0),('r2','case1','Sales',1,1,1),('r3','case1','Extra',0,1,2)").run();
-  db.raw.prepare('INSERT INTO sessions VALUES (?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000);
+  db.raw.prepare("INSERT INTO staff(staff_id,name,email,role,pw) VALUES ('admin1','Admin','admin@x.test','admin','-')").run();
+  db.raw.prepare('INSERT INTO sessions(token_hash,expires_at,staff_id) VALUES (?,?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000, 'admin1');
   return db;
 }
 async function call(e, path, { method = 'GET', data, auth = 'office', caseToken: ct } = {}) {
