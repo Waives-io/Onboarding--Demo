@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://127.0.0.1:8787 https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev; img-src 'self' data:; object-src 'none'; base-uri 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://127.0.0.1:8787 https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev; img-src 'self' data: http://127.0.0.1:8787 https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev; object-src 'none'; base-uri 'self'">
   <title>התיק מוכן · סביבת המשרד</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="portal.css">
@@ -13,8 +13,8 @@
 <body>
   <div class="demo-bar">סביבת הדגמה · נתונים ומסמכים פיקטיביים בלבד</div>
   <header>
-    <a class="brand" href="office.html"><span class="brand-mark">✓</span><span><strong>התיק מוכן<span class="brand-dot">.</span></strong><small>מרכז המסמכים של המשרד</small></span></a>
-    <nav aria-label="ניווט ראשי"><button data-view="cases" class="active">מקרים</button><button data-view="clients">לקוחות</button><button data-view="catalog">מסמכים ותבניות</button></nav>
+    <a class="brand" href="office.html"><span class="brand-mark">✓</span><span><strong>התיק מוכן<span class="brand-dot">.</span></strong><small id="office-name">מרכז המסמכים של המשרד</small></span></a>
+    <nav aria-label="ניווט ראשי"><button data-view="cases" class="active">תיקים</button><button data-view="clients">לקוחות</button><button data-view="documents">מסמכים</button><button data-view="templates">תבניות</button><button data-view="settings">הגדרות</button></nav>
     <button id="logout" hidden>יציאה</button>
   </header>
   <main id="app"><p role="status">טוען את סביבת המשרד…</p></main>

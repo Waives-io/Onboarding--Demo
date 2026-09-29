@@ -1,5 +1,5 @@
 import legacy from './intake.mjs';
-import {HttpError,requireThat,clean,hash,randomToken,caseToken,validateFile,parseCSV,toCSV} from './domain.mjs';
+import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,parseCSV,toCSV} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
 const SITE=ORIGIN+'/Onboarding--Demo/';
 const now=()=>new Date().toISOString();
@@ -38,6 +38,19 @@ function syncCase(db,id) {
  WHEN client_completed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
+const DEFAULT_REMINDER='שלום {client},\nלהשלמת {case} ({period}) נדרשים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
+const PLACEHOLDERS=['client','case','period','due','missing','link','office'];
+async function settings(db) {return await one(db,'SELECT * FROM settings WHERE id=1')||{office_name:'',warning_days:7,urgent_days:2,whatsapp_template:'',logo_version:0};}
+// Read the version at use time so a concurrent revoke can never hand out the old link.
+const portalLink=async(env,db,id)=>{const {link_version}=await one(db,'SELECT link_version FROM cases WHERE case_id=?',id);return SITE+'client.html#'+await caseLinkToken(id,link_version,env.PORTAL_LINK_KEY);};
+const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
+function reminderText(s,view,link) {
+ const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction'));
+ const values={client:view.client_name,case:view.name,period:view.reporting_period,due:ddmmyyyy(view.due_date),office:s.office_name,link,
+  missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
+ return {missing,text:(s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m)};
+}
+const caseMeta=(c,requirements,s,today)=>({...caseProgress(c.status,requirements),...deadlineState(c.due_date,c.status,today,s.warning_days,s.urgent_days)});
 async function office(req,db) {
  const token=(req.headers.get('Authorization')||'').replace(/^Bearer /,'');
  requireThat(token.length===64 && await one(db,'SELECT token_hash FROM sessions WHERE token_hash=? AND expires_at>?',await hash(token),Date.now()),'unauthorized',401);
@@ -52,8 +65,10 @@ async function caseView(db,id,isOffice=false) {
  requireThat(c,'not_found',404); delete c.token_hash;
  const requirements=await all(db,'SELECT * FROM requirements WHERE case_id=? ORDER BY position',id);
  for(const r of requirements){r.uploads=await all(db,`SELECT submission_id,filename,mime_type,size,version,state,created_at,stored_at${isOffice?',drive_file_id,drive_folder_id':''} FROM uploads WHERE requirement_id=? ORDER BY version DESC`,r.requirement_id);if(!isOffice)delete r.drive_folder_id;}
- if(!isOffice){delete c.email;delete c.phone;delete c.business_number;delete c.drive_folder_id;delete c.client_id;delete c.reference;}
- return {...c,requirements,...(isOffice?{events:await all(db,'SELECT * FROM events WHERE case_id=? ORDER BY created_at DESC LIMIT 100',id)}:{})};
+ const meta=caseMeta(c,requirements,await settings(db),localDate());
+ if(isOffice)meta.whatsapp=israeliMobile(c.phone);
+ if(!isOffice){delete c.email;delete c.phone;delete c.business_number;delete c.drive_folder_id;delete c.client_id;delete c.reference;delete c.link_version;}
+ return {...c,...meta,requirements,...(isOffice?{events:await all(db,'SELECT * FROM events WHERE case_id=? ORDER BY created_at DESC LIMIT 100',id)}:{})};
 }
 function clientFields(b) {
  const r={name:clean(b.name,120,true),reference:clean(b.reference,64,true),business_number:clean(b.business_number||'',40),email:clean(b.email||'',254),phone:clean(b.phone||'',40),status:clean(b.status||'active',30),tags:clean(b.tags||'',200),notes:clean(b.notes||'',2000)};
@@ -123,6 +138,9 @@ async function handle(req,env) {
  requireThat(env.MAKE_BRIDGE_KEY?.length>=32 && await hash(req.headers.get('X-Bridge-Key')||'')===await hash(env.MAKE_BRIDGE_KEY),'unauthorized',401);
  const b=await body(req),u=await one(db,'SELECT * FROM uploads WHERE submission_id=?',b.submission_id);requireThat(u,'not_found',404);await storeReceipt(db,u,b);return {ok:true};
  }
+ if(path==='/api/branding'&&method==='GET'){const x=await settings(db);return {office_name:x.office_name,logo_version:x.logo_version};}
+ if(path==='/api/logo'&&method==='GET'){const l=await one(db,'SELECT mime,data FROM logo WHERE id=1');requireThat(l,'not_found',404);
+  return new Response(Uint8Array.from(atob(l.data),ch=>ch.charCodeAt(0)),{headers:{'Content-Type':l.mime,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff'}});}
  if(path.startsWith('/api/portal')) {
  const c=await portal(req,db);
  if(path==='/api/portal'&&method==='GET'){await expirePending(db,c.case_id);return caseView(db,c.case_id);}
@@ -167,21 +185,47 @@ async function handle(req,env) {
  await office(req,db);
  if(path==='/api/logout'&&method==='POST'){await stmt(db,'DELETE FROM sessions WHERE token_hash=?',await hash(req.headers.get('Authorization').slice(7))).run();return {ok:true};}
  if(path==='/api/clients'&&method==='GET')return all(db,'SELECT * FROM clients ORDER BY name');
+ const clientMatch=path.match(/^\/api\/clients\/([\w-]+)$/);
+ if(clientMatch&&method==='POST'){const id=clientMatch[1],b=await body(req),r=clientFields(b);requireThat(await one(db,'SELECT client_id FROM clients WHERE client_id=?',id),'not_found',404);
+  requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=? AND client_id!=?',r.reference,id),'duplicate_reference',409);
+  await stmt(db,"UPDATE clients SET name=?,reference=?,business_number=?,email=?,phone=?,status=?,tags=?,notes=?,updated_at=? WHERE client_id=?",...Object.values(r),now(),id).run();return {client_id:id};}
+ if(path==='/api/settings'&&method==='GET')return settings(db);
+ if(path==='/api/settings'&&method==='POST'){const b=await body(req),w=Number(b.warning_days),u=Number(b.urgent_days),t=clean(b.whatsapp_template||'',1000);
+  requireThat(Number.isInteger(w)&&Number.isInteger(u)&&u>=0&&u<w&&w<=60,'invalid_deadline_days');
+  requireThat([...t.matchAll(/\{([^{}]*)\}/g)].every(m=>PLACEHOLDERS.includes(m[1])),'invalid_template_placeholder');
+  requireThat(!b.email||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email));
+  await stmt(db,'UPDATE settings SET office_name=?,office_size=?,manager_name=?,phone=?,email=?,address=?,warning_days=?,urgent_days=?,whatsapp_template=?,updated_at=? WHERE id=1',
+   clean(b.office_name||'',120),clean(b.office_size||'',40),clean(b.manager_name||'',120),clean(b.phone||'',40),clean(b.email||'',254),clean(b.address||'',200),w,u,t,now()).run();return settings(db);}
+ if(path==='/api/settings/logo'&&method==='POST'){const b=await body(req);
+  if(!b.data){await db.batch([stmt(db,'DELETE FROM logo WHERE id=1'),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
+  let bytes;try{bytes=Uint8Array.from(atob(String(b.data)),ch=>ch.charCodeAt(0));}catch{throw new HttpError(400,'invalid_file');}
+  requireThat(bytes.length>=8&&bytes.length<=200*1024,'logo_too_large',413);
+  const mime=[137,80,78,71,13,10,26,10].every((n,i)=>bytes[i]===n)?'image/png':bytes[0]===255&&bytes[1]===216&&bytes[2]===255?'image/jpeg':null;
+  requireThat(mime,'invalid_file_signature');
+  // Store a re-encoded copy of the verified bytes, never the caller's string.
+  let bin='';for(const x of bytes)bin+=String.fromCharCode(x);
+  await db.batch([stmt(db,'INSERT INTO logo(id,mime,data) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data',mime,btoa(bin)),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
  if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=?',b.reference),'duplicate_reference',409);await insertClient(db,id,b).run();return {client_id:id};}
- if(path==='/api/cases'&&method==='GET')return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) ORDER BY c.last_activity DESC`).then(rows=>rows.map(({token_hash,...r})=>r));
+ if(path==='/api/cases'&&method==='GET')return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) ORDER BY c.last_activity DESC`).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,'SELECT case_id,required,status FROM requirements');
+  return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});
  if(path==='/api/cases'&&method==='POST'){const x=await caseStatements(db,await body(req),env);await db.batch(x.statements);return {case_id:x.id,link:SITE+'client.html#'+x.token};}
  if(path==='/api/catalog'&&method==='GET')return all(db,'SELECT * FROM document_catalog ORDER BY name');
  if(path==='/api/catalog'&&method==='POST'){const b=await body(req),id=b.document_id||uid();await stmt(db,'INSERT INTO document_catalog(document_id,name,description,active) VALUES (?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET name=excluded.name,description=excluded.description,active=excluded.active',id,clean(b.name,160,true),clean(b.description||'',500),b.active===false?0:1).run();return {document_id:id};}
  if(path==='/api/templates'&&method==='GET'){const rows=await all(db,'SELECT * FROM templates ORDER BY name');for(const r of rows)r.items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',r.template_id);return rows;}
  if(path==='/api/templates'&&method==='POST'){const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40);const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)];for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,r.document_id,r.required?1:0,r.max_files,i));}await db.batch(statements);return {template_id:id};}
- const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|review|status|reminder|reconcile))?$/);
+ const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|status|reminder|reconcile))?$/);
  if(match){const id=match[1],action=match[2],c=await one(db,'SELECT * FROM cases WHERE case_id=?',id);requireThat(c,'not_found',404);
  if(!action&&method==='GET'){await expirePending(db,id);return caseView(db,id,true);}
- if(action==='link'&&method==='GET')return {link:SITE+'client.html#'+await caseToken(id,env.PORTAL_LINK_KEY)};
+ if(action==='link'&&method==='GET')return {link:await portalLink(env,db,id)};
+ // A leaked link is revoked by moving the case to a new link version. The old token stops matching token_hash.
+ if(action==='revoke-link'&&method==='POST'){const v=c.link_version+1,t=await caseLinkToken(id,v,env.PORTAL_LINK_KEY);
+  const done=await db.batch([stmt(db,'UPDATE cases SET link_version=?,token_hash=? WHERE case_id=? AND link_version=?',v,await hash(t),id,c.link_version),event(db,id,'link_revoked')]);
+  requireThat(done[0].meta.changes===1,'conflict',409);return {link:SITE+'client.html#'+t};}
  if(action==='status'&&method==='POST'){const b=await body(req);requireThat(['closed','archived','reopen'].includes(b.status));await db.batch([stmt(db,'UPDATE cases SET status=?,closed_at=? WHERE case_id=?',b.status==='reopen'?'collecting':b.status,b.status==='reopen'?null:now(),id),syncCase(db,id),event(db,id,'case_status',b.status)]);return {ok:true};}
  active(c);
  if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle="NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending')",rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,?,? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),rq),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=? AND ${idle}`,b.status,message,rq,rq),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
- if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),missing=view.requirements.filter(r=>['missing','correction'].includes(r.status));requireThat(missing.length,'nothing_missing',409);const link=SITE+'client.html#'+await caseToken(id,env.PORTAL_LINK_KEY);const text=`שלום ${view.client_name},\nלהשלמת ${view.name} (${view.reporting_period}) נדרשים:\n${missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')}\nתאריך יעד: ${view.due_date}\nלהעלאת המסמכים: ${link}`;await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', ')).run();return {text,link,email:view.email,phone:view.phone,subject:'השלמת מסמכים — '+view.name};}
+ if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),x=await settings(db),link=await portalLink(env,db,id),{missing,text}=reminderText(x,view,link);requireThat(missing.length,'nothing_missing',409);
+  await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', ')).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
  if(path==='/api/csv/export'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
@@ -195,5 +239,5 @@ export default {async fetch(req,env){const path=new URL(req.url).pathname;
  const localOrigin=localTarget && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
  if(origin && origin!==ORIGIN && !localOrigin)return reply({error:'origin_denied'},403);
  if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin===ORIGIN?ORIGIN:localOrigin?origin:ORIGIN,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Case-Token','Vary':'Origin'}});
- try{return reply(await handle(req,env),200,origin);}catch(e){return reply({error:e instanceof HttpError?e.message:'internal_error'},e instanceof HttpError?e.status:500,origin);}
+ try{const out=await handle(req,env);return out instanceof Response?out:reply(out,200,origin);}catch(e){return reply({error:e instanceof HttpError?e.message:'internal_error'},e instanceof HttpError?e.status:500,origin);}
 }};
