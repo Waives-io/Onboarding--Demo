@@ -16,6 +16,36 @@ export async function caseToken(caseId, secret) {
  const key = await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
  return Array.from(new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(caseId))),b=>b.toString(16).padStart(2,'0')).join('');
 }
+// Version 1 keeps the original formula so existing client links keep working. Revoking a link bumps the version.
+export function caseLinkToken(caseId, version, secret) {
+ return caseToken(Number(version) > 1 ? `${caseId}:v${version}` : caseId, secret);
+}
+// Deadlines are calendar dates in the office's timezone, not UTC instants.
+export function localDate(at = new Date(), timeZone = 'Asia/Jerusalem') {
+ return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
+}
+export function deadlineState(dueDate, status, today, warningDays = 7, urgentDays = 2) {
+ if (['closed','archived','ready_for_work'].includes(status) || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate || '')) return { deadline: 'none', days_left: null };
+ const days = Math.round((Date.parse(dueDate + 'T00:00:00Z') - Date.parse(today + 'T00:00:00Z')) / 86400000);
+ const deadline = days < 0 ? 'overdue' : days <= urgentDays ? 'urgent' : days <= warningDays ? 'warning' : 'ok';
+ return { deadline, days_left: days };
+}
+// WhatsApp needs an international mobile number. Anything that is not clearly an Israeli mobile gets no link.
+export function israeliMobile(phone) {
+ const digits = String(phone ?? '').replace(/[\s\-().]/g, '');
+ if (!/^\+?\d+$/.test(digits)) return null;
+ const national = digits.replace(/^\+?972|^00972/, '0');
+ return /^05\d{8}$/.test(national) ? '972' + national.slice(1) : null;
+}
+// Before the client finishes, progress counts required documents sent. After that it counts documents the office approved.
+export function caseProgress(status, requirements) {
+ if (['collecting','action_required'].includes(status)) {
+  const required = requirements.filter(r => r.required);
+  return { progress_kind: 'sent', progress_done: required.filter(r => ['uploaded','approved'].includes(r.status)).length, progress_total: required.length };
+ }
+ const counted = requirements.filter(r => r.required || r.status !== 'missing');
+ return { progress_kind: 'approved', progress_done: counted.filter(r => r.status === 'approved').length, progress_total: counted.length };
+}
 export async function validateFile(file) {
  requireThat(file instanceof File && file.size >= 8 && file.size <= 4*1024*1024, 'invalid_file');
  const ext = file.name.split('.').pop().toLowerCase();
