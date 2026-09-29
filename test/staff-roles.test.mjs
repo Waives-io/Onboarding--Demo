@@ -184,3 +184,22 @@ test('office actions record who did them', async () => {
   const portal = (await call(e, '/api/portal', { caseTok: await caseToken('case1', KEY) })).body;
   for (const k of ['owner', 'owner_id', 'owner_name', 'events']) assert.equal(portal[k], undefined, k);
 });
+
+test('a case handed to someone else mid-request stays out of the old manager\'s reach', async () => {
+  const db = await office(), e = env(db);
+  db.raw.prepare("INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state) VALUES ('s1','r-case1','a.pdf','application/pdf',10,'h',1,'stored')").run();
+  // The admin moves case1 to m2 right after m1 passed the ownership check.
+  const moveAt = marker => { db.onPrepare = sql => { if (sql.includes(marker)) { db.onPrepare = null; db.raw.prepare("UPDATE cases SET owner_id='m2' WHERE case_id='case1'").run(); } }; };
+  moveAt('closed_at=?');
+  assert.equal((await call(e, '/api/cases/case1/status', { method: 'POST', token: T.m1, data: { status: 'closed' } })).status, 404);
+  db.raw.prepare("UPDATE cases SET owner_id='m1' WHERE case_id='case1'").run();
+  moveAt('UPDATE requirements SET status=?');
+  assert.notEqual((await call(e, '/api/cases/case1/review', { method: 'POST', token: T.m1, data: { requirement_id: 'r-case1', status: 'approved' } })).status, 200);
+  db.raw.prepare("UPDATE cases SET owner_id='m1' WHERE case_id='case1'").run();
+  moveAt('link_version=?,token_hash=?');
+  assert.equal((await call(e, '/api/cases/case1/revoke-link', { method: 'POST', token: T.m1, data: {} })).status, 409);
+  const c = db.raw.prepare("SELECT status,link_version FROM cases WHERE case_id='case1'").get();
+  assert.deepEqual([c.status, c.link_version], ['collecting', 1]);
+  assert.equal(db.raw.prepare("SELECT status FROM requirements WHERE requirement_id='r-case1'").get().status, 'missing');
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM events WHERE case_id='case1'").get().n, 0);
+});
