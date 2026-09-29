@@ -1,5 +1,5 @@
 import legacy from './intake.mjs';
-import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,parseCSV,toCSV} from './domain.mjs';
+import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,toCSV,validPassword,hashPassword,checkPassword} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
 const SITE=ORIGIN+'/Onboarding--Demo/';
 const now=()=>new Date().toISOString();
@@ -7,7 +7,9 @@ const uid=()=>crypto.randomUUID();
 const stmt=(db,sql,...args)=>db.prepare(sql).bind(...args);
 const one=(db,sql,...args)=>stmt(db,sql,...args).first();
 const all=async(db,sql,...args)=>(await stmt(db,sql,...args).all()).results;
-const event=(db,id,action,detail='')=>stmt(db,'INSERT INTO events(event_id,case_id,action,detail) VALUES (?,?,?,?)',uid(),id,action,detail);
+// actor is {type:'staff'|'client', id}. Receipts from Make and timeouts leave it empty (system).
+const event=(db,id,action,detail='',actor=null)=>stmt(db,'INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES (?,?,?,?,?,?)',uid(),id,action,detail,actor?.type||null,actor?.id||null);
+const staffActor=me=>({type:'staff',id:me.staff_id});
 function reply(body,status=200,origin='') { return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Vary':'Origin',...(origin?{'Access-Control-Allow-Origin':origin}:{})}}); }
 async function body(req) { requireThat(Number(req.headers.get('content-length')||0)<=1000000,'too_large',413); try{return await req.json();}catch{throw new HttpError(400,'invalid_json');} }
 function active(c) {requireThat(!['closed','archived'].includes(c.status),'case_closed',409);}
@@ -35,7 +37,7 @@ function syncCase(db,id) {
  WHEN status IN ('closed','archived') THEN status
  WHEN EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND status='correction') THEN 'action_required'
  WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND status!='approved' AND (required=1 OR status!='missing')) THEN 'ready_for_work'
- WHEN client_completed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
+ WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
 const DEFAULT_REMINDER='שלום {client},\nלהשלמת {case} ({period}) נדרשים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
@@ -51,43 +53,74 @@ function reminderText(s,view,link) {
  return {missing,text:(s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m)};
 }
 const caseMeta=(c,requirements,s,today)=>({...caseProgress(c.status,requirements),...deadlineState(c.due_date,c.status,today,s.warning_days,s.urgent_days)});
+// Every request re-reads the staff row, so a deactivated member or a role change takes effect at once.
 async function office(req,db) {
  const token=(req.headers.get('Authorization')||'').replace(/^Bearer /,'');
- requireThat(token.length===64 && await one(db,'SELECT token_hash FROM sessions WHERE token_hash=? AND expires_at>?',await hash(token),Date.now()),'unauthorized',401);
+ requireThat(/^[a-f0-9]{64}$/.test(token),'unauthorized',401);
+ const th=await hash(token),time=Date.now();
+ const me=await one(db,'SELECT s.token_hash,s.last_seen_at seen,st.staff_id,st.name,st.email,st.role FROM sessions s JOIN staff st USING(staff_id) WHERE s.token_hash=? AND s.expires_at>? AND st.active=1',th,time);
+ requireThat(me,'unauthorized',401);
+ if(!me.seen||me.seen<time-5*60000)await db.batch([stmt(db,'UPDATE sessions SET last_seen_at=? WHERE token_hash=?',time,th),stmt(db,'UPDATE staff SET last_seen_at=? WHERE staff_id=?',now(),me.staff_id)]);
+ delete me.seen;return me;
 }
+const isAdmin=me=>me.role==='admin';
+const adminOnly=me=>requireThat(isAdmin(me),'forbidden',403);
+// A manager sees the cases they own, and the clients they created or own a case for.
+const CLIENT_SCOPE='(cl.created_by=? OR EXISTS(SELECT 1 FROM cases x WHERE x.client_id=cl.client_id AND x.owner_id=?))';
+async function visibleClient(db,me,id){return one(db,`SELECT cl.* FROM clients cl WHERE cl.client_id=?${isAdmin(me)?'':' AND '+CLIENT_SCOPE}`,id,...(isAdmin(me)?[]:[me.staff_id,me.staff_id]));}
+// Someone else's case answers 404, the same as a case that does not exist.
+async function ownCase(db,me,id){const c=await one(db,'SELECT * FROM cases WHERE case_id=?',id);requireThat(c&&(isAdmin(me)||c.owner_id===me.staff_id),'not_found',404);return c;}
+async function activeStaff(db,id){const s=await one(db,'SELECT staff_id,name FROM staff WHERE staff_id=? AND active=1',id);requireThat(s,'staff_not_found',404);return s;}
+// Counts every attempt from an address, before any password work, so the key derivation cannot be used to burn CPU.
+async function limited(db,key,max){const bucket=await hash(key),time=Date.now();
+ await stmt(db,'INSERT INTO login_limits(bucket,attempts,expires_at) VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET attempts=CASE WHEN expires_at<? THEN 1 ELSE attempts+1 END,expires_at=CASE WHEN expires_at<? THEN excluded.expires_at ELSE expires_at END',bucket,time+900000,time,time).run();
+ requireThat((await one(db,'SELECT attempts FROM login_limits WHERE bucket=?',bucket)).attempts<=max,'too_many_attempts',429);return bucket;}
+async function newSession(db,staffId){const token=randomToken(),time=Date.now();
+ await db.batch([stmt(db,'INSERT INTO sessions(token_hash,expires_at,staff_id,last_seen_at) VALUES (?,?,?,?)',await hash(token),time+8*3600000,staffId,time),stmt(db,'DELETE FROM sessions WHERE expires_at<?',time),stmt(db,'UPDATE staff SET last_seen_at=? WHERE staff_id=?',now(),staffId)]);return token;}
+const emailOf=v=>{const e=clean(v,254,true).toLowerCase();requireThat(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e),'invalid_email');return e;};
+// Unknown emails still run exactly one derivation, so response time does not tell which emails exist.
+// On a fresh isolate that one derivation is the one that creates the dummy record.
+let dummy;
+async function verify(password,stored){if(stored)return checkPassword(password,stored);if(!dummy){dummy=await hashPassword(password);return false;}await checkPassword(password,dummy);return false;}
 async function portal(req,db) {
  const token=req.headers.get('X-Case-Token')||'';
  requireThat(/^[a-f0-9]{64}$/.test(token),'unauthorized',401);
  const c=await one(db,'SELECT cases.*,clients.name AS client_name,clients.reference AS client_reference,clients.email AS client_email FROM cases JOIN clients USING(client_id) WHERE token_hash=?',await hash(token)); requireThat(c,'unauthorized',401); return c;
 }
 async function caseView(db,id,isOffice=false) {
- const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.reference,clients.email,clients.phone,clients.business_number FROM cases JOIN clients USING(client_id) WHERE case_id=?`,id);
+ const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
  requireThat(c,'not_found',404); delete c.token_hash;
  const requirements=await all(db,'SELECT * FROM requirements WHERE case_id=? ORDER BY position',id);
  for(const r of requirements){r.uploads=await all(db,`SELECT submission_id,filename,mime_type,size,version,state,created_at,stored_at${isOffice?',drive_file_id,drive_folder_id':''} FROM uploads WHERE requirement_id=? ORDER BY version DESC`,r.requirement_id);if(!isOffice)delete r.drive_folder_id;}
  const meta=caseMeta(c,requirements,await settings(db),localDate());
  if(isOffice)meta.whatsapp=israeliMobile(c.phone);
- if(!isOffice){delete c.email;delete c.phone;delete c.business_number;delete c.drive_folder_id;delete c.client_id;delete c.reference;delete c.link_version;}
- return {...c,...meta,requirements,...(isOffice?{events:await all(db,'SELECT * FROM events WHERE case_id=? ORDER BY created_at DESC LIMIT 100',id)}:{})};
+ if(!isOffice){for(const k of ['email','phone','business_number','drive_folder_id','client_id','reference','link_version','owner','owner_id','owner_name'])delete c[k];}
+ return {...c,...meta,requirements,...(isOffice?{events:await all(db,'SELECT e.*,s.name actor_name FROM events e LEFT JOIN staff s ON s.staff_id=e.actor_id WHERE e.case_id=? ORDER BY e.created_at DESC LIMIT 100',id)}:{})};
 }
 function clientFields(b) {
  const r={name:clean(b.name,120,true),reference:clean(b.reference,64,true),business_number:clean(b.business_number||'',40),email:clean(b.email||'',254),phone:clean(b.phone||'',40),status:clean(b.status||'active',30),tags:clean(b.tags||'',200),notes:clean(b.notes||'',2000)};
  requireThat(!r.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));return r;
 }
-function insertClient(db,id,b) {const r=clientFields(b);return stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,status,tags,notes) VALUES (?,?,?,?,?,?,?,?,?)',id,...Object.values(r));}
-async function caseStatements(db,b,env) {
- const id=b.case_id||uid(); requireThat(/^[a-zA-Z0-9-]{1,64}$/.test(id));
- requireThat(await one(db,'SELECT client_id FROM clients WHERE client_id=?',b.client_id),'client_not_found',404);
- const name=clean(b.name,160,true),type=clean(b.type||'custom',80,true),category=clean(b.category||'',80),period=clean(b.reporting_period,80,true),owner=clean(b.owner||'',100),due=clean(b.due_date,10,true);
- requireThat(/^\d{4}-\d{2}-\d{2}$/.test(due)&&new Date(due).toISOString().slice(0,10)===due,'invalid_due_date');
+function insertClient(db,id,b,createdBy) {const r=clientFields(b);return stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,status,tags,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',id,...Object.values(r),createdBy);}
+// owner is the staff member already checked by the caller. The old owner text keeps their name for exports.
+async function caseStatements(db,b,env,me,owner) {
+ const id=uid();
+ requireThat(await visibleClient(db,me,b.client_id),'client_not_found',404);
+ const isDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
+ const name=clean(b.name,160,true),type=clean(b.type||'custom',80,true),category=clean(b.category||'',80),due=clean(b.due_date,10,true);
+ requireThat(isDate(due),'invalid_due_date');
+ // The office picks a date range. Imports may still send a free-text period.
+ const start=b.period_start||null,end=b.period_end||null;
+ if(start||end)requireThat(isDate(start)&&isDate(end)&&start<=end,'invalid_period');
+ const period=start?`${ddmmyyyy(start)}–${ddmmyyyy(end)}`:clean(b.reporting_period,80,true);
  let items=b.requirements;
  if(!items && b.template_id)items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',b.template_id);
  requireThat(Array.isArray(items)&&items.length>0&&items.length<=40,'requirements_required');
  requireThat(items.some(r=>r.required===true||r.required===1),'mandatory_requirement_required');
  const token=await caseToken(id,env.PORTAL_LINK_KEY);
- const statements=[stmt(db,'INSERT INTO cases(case_id,client_id,name,type,category,reporting_period,due_date,owner,token_hash) VALUES (?,?,?,?,?,?,?,?,?)',id,b.client_id,name,type,category,period,due,owner,await hash(token))];
+ const statements=[stmt(db,'INSERT INTO cases(case_id,client_id,name,type,category,reporting_period,period_start,period_end,due_date,owner,owner_id,token_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',id,b.client_id,name,type,category,period,start,end,due,owner.name,owner.staff_id,await hash(token))];
  for(const [i,r] of items.entries()) {const max=Number(r.max_files||1);requireThat(Number.isInteger(max)&&max>=1&&max<=20);statements.push(stmt(db,'INSERT INTO requirements(requirement_id,case_id,document_id,name,required,max_files,position) VALUES (?,?,?,?,?,?,?)',uid(),id,r.document_id||null,clean(r.name,160,true),r.required?1:0,max,i));}
- statements.push(event(db,id,'case_created'));return {id,token,statements};
+ statements.push(event(db,id,'case_created',owner.name,staffActor(me)));return {id,token,statements};
 }
 function bridge(env) {
  const url=new URL(env.LOCAL_BRIDGE_URL||env.MAKE_WEBHOOK_URL||'https://invalid.invalid');
@@ -116,6 +149,9 @@ async function storeReceipt(db,u,receipt) {
  stmt(db,`UPDATE cases SET completed_at=NULL WHERE case_id=? AND ${pending}`,r.case_id,sid),
  stmt(db,'UPDATE cases SET drive_folder_id=coalesce(drive_folder_id,?) WHERE case_id=?',receipt.drive_folder_id,r.case_id),
  syncCase(db,r.case_id),
+ // The last required document moves the case to the office. Record that moment once, like the old "finished" step did.
+ stmt(db,"INSERT INTO events(event_id,case_id,action,detail) SELECT ?,case_id,'client_completed','' FROM cases WHERE case_id=? AND status='client_completed' AND client_completed_at IS NULL",uid(),r.case_id),
+ stmt(db,"UPDATE cases SET client_completed_at=? WHERE case_id=? AND status='client_completed' AND client_completed_at IS NULL",now(),r.case_id),
  stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,CASE WHEN ${pending} THEN 'upload_stored' ELSE 'upload_stored_late' END,? WHERE ${pending} OR ${failed}`,uid(),r.case_id,sid,u.filename,sid,sid),
  stmt(db,"UPDATE uploads SET state='stored',drive_file_id=?,drive_folder_id=?,stored_at=? WHERE submission_id=? AND state IN ('pending','failed')",receipt.drive_file_id,receipt.drive_folder_id,now(),sid)
  ]);
@@ -126,13 +162,25 @@ async function handle(req,env) {
  const path=new URL(req.url).pathname,method=req.method,db=env.DB;
  requireThat(db,'not_configured',503);
  if(path==='/api/health')return {ok:true,version:2,storage_ready:env.PORTAL_BRIDGE_ENABLED==='true'};
+ const ip='ip:'+(req.headers.get('CF-Connecting-IP')||'local'),noAdmin=async()=>!await one(db,"SELECT 1 FROM staff WHERE role='admin' AND active=1");
+ if(path==='/api/auth-state'&&method==='GET')return {setup_required:await noAdmin()};
+ // The office code is only a key for creating the first admin. Once an admin exists it opens nothing.
+ if(path==='/api/setup'&&method==='POST') {
+ const b=await body(req);await limited(db,ip,20);
+ requireThat(await noAdmin(),'already_set_up',409);
+ requireThat(env.OFFICE_CODE?.length>=8,'not_configured',503);
+ requireThat(typeof b.code==='string'&&b.code.length<=200&&await hash(b.code)===await hash(env.OFFICE_CODE),'unauthorized',401);
+ requireThat(validPassword(b.password),'weak_password');
+ const id=uid(),done=await stmt(db,"INSERT INTO staff(staff_id,name,email,role,pw) SELECT ?,?,?,'admin',? WHERE NOT EXISTS(SELECT 1 FROM staff WHERE role='admin' AND active=1)",id,clean(b.name,120,true),emailOf(b.email),await hashPassword(b.password)).run();
+ requireThat(done.meta.changes===1,'already_set_up',409);return {token:await newSession(db,id)};
+ }
  if(path==='/api/login'&&method==='POST') {
- const b=await body(req),ip=req.headers.get('CF-Connecting-IP')||'local',bucket=await hash(ip),time=Date.now();
- await stmt(db,'INSERT INTO login_limits(bucket,attempts,expires_at) VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET attempts=CASE WHEN expires_at<? THEN 1 ELSE attempts+1 END,expires_at=CASE WHEN expires_at<? THEN excluded.expires_at ELSE expires_at END',bucket,time+900000,time,time).run();
- const limit=await one(db,'SELECT * FROM login_limits WHERE bucket=?',bucket);requireThat(limit.attempts<=5,'too_many_attempts',429);
- requireThat(env.OFFICE_CODE?.length>=16,'not_configured',503);
- requireThat(typeof b.code==='string' && b.code.length<=200 && await hash(b.code)===await hash(env.OFFICE_CODE),'unauthorized',401);
- const token=randomToken();await db.batch([stmt(db,'INSERT INTO sessions VALUES (?,?)',await hash(token),time+8*3600000),stmt(db,'DELETE FROM sessions WHERE expires_at<?',time)]);return {token};
+ const b=await body(req);await limited(db,ip,30);
+ const email=typeof b.email==='string'?b.email.trim().toLowerCase().slice(0,254):'',account=await limited(db,'account:'+email,10);
+ const s=await one(db,'SELECT staff_id,pw FROM staff WHERE email=? AND active=1',email);
+ const ok=await verify(typeof b.password==='string'?b.password.slice(0,200):'',s?.pw);
+ requireThat(s&&ok,'unauthorized',401);
+ await stmt(db,'DELETE FROM login_limits WHERE bucket=?',account).run();return {token:await newSession(db,s.staff_id)};
  }
  if(path==='/api/storage-receipt'&&method==='POST') {
  requireThat(env.MAKE_BRIDGE_KEY?.length>=32 && await hash(req.headers.get('X-Bridge-Key')||'')===await hash(env.MAKE_BRIDGE_KEY),'unauthorized',401);
@@ -148,7 +196,7 @@ async function handle(req,env) {
  if(path==='/api/portal/complete'&&method==='POST') {
  const missing=await one(db,"SELECT count(*) AS n FROM requirements WHERE case_id=? AND (status='correction' OR (required=1 AND status NOT IN ('uploaded','approved')))",c.case_id);
  requireThat(missing.n===0,'missing_requirements',409);
- await db.batch([stmt(db,'UPDATE cases SET client_completed_at=? WHERE case_id=?',now(),c.case_id),syncCase(db,c.case_id),event(db,c.case_id,'client_completed')]);return caseView(db,c.case_id);
+ await db.batch([stmt(db,'UPDATE cases SET client_completed_at=? WHERE case_id=?',now(),c.case_id),syncCase(db,c.case_id),event(db,c.case_id,'client_completed','',{type:'client',id:c.client_id})]);return caseView(db,c.case_id);
  }
  if(path==='/api/portal/uploads'&&method==='POST') {
  bridge(env);
@@ -182,21 +230,52 @@ async function handle(req,env) {
  }
  throw new HttpError(404,'not_found');
  }
- await office(req,db);
- if(path==='/api/logout'&&method==='POST'){await stmt(db,'DELETE FROM sessions WHERE token_hash=?',await hash(req.headers.get('Authorization').slice(7))).run();return {ok:true};}
- if(path==='/api/clients'&&method==='GET')return all(db,'SELECT * FROM clients ORDER BY name');
+ // Deny by default: every route below either checks adminOnly, or limits a manager to their own cases and clients.
+ const me=await office(req,db),actor=staffActor(me);
+ if(path==='/api/logout'&&method==='POST'){await stmt(db,'DELETE FROM sessions WHERE token_hash=?',me.token_hash).run();return {ok:true};}
+ if(path==='/api/me'&&method==='GET')return {staff_id:me.staff_id,name:me.name,email:me.email,role:me.role};
+ if(path==='/api/me/password'&&method==='POST'){const b=await body(req);await limited(db,'account:'+me.email,10);
+  requireThat(await checkPassword(String(b.current??'').slice(0,200),(await one(db,'SELECT pw FROM staff WHERE staff_id=?',me.staff_id)).pw),'wrong_password',403);
+  requireThat(validPassword(b.password),'weak_password');
+  // Other devices are signed out. This one stays in.
+  await db.batch([stmt(db,'UPDATE staff SET pw=? WHERE staff_id=?',await hashPassword(b.password),me.staff_id),stmt(db,'DELETE FROM sessions WHERE staff_id=? AND token_hash!=?',me.staff_id,me.token_hash)]);return {ok:true};}
+ if(path==='/api/staff'&&method==='GET')return isAdmin(me)
+  ?all(db,"SELECT staff_id,name,email,role,active,created_at,last_seen_at,(SELECT count(*) FROM cases WHERE owner_id=staff.staff_id AND status NOT IN ('closed','archived')) open_cases FROM staff ORDER BY active DESC,name")
+  :all(db,'SELECT staff_id,name,role FROM staff WHERE active=1 ORDER BY name');
+ if(path==='/api/staff'&&method==='POST'){adminOnly(me);const b=await body(req);requireThat(['admin','manager'].includes(b.role));
+  const role=b.role,active=b.active===false?0:1,name=clean(b.name,120,true),email=emailOf(b.email);
+  requireThat(b.password===undefined||b.password===''||validPassword(b.password),'weak_password');
+  requireThat(!await one(db,'SELECT staff_id FROM staff WHERE email=? AND staff_id!=?',email,b.staff_id||''),'duplicate_email',409);
+  if(!b.staff_id){requireThat(validPassword(b.password),'weak_password');const id=uid();
+   await stmt(db,'INSERT INTO staff(staff_id,name,email,role,pw,active) VALUES (?,?,?,?,?,?)',id,name,email,role,await hashPassword(b.password),active).run();return {staff_id:id};}
+  const cur=await one(db,'SELECT * FROM staff WHERE staff_id=?',b.staff_id);requireThat(cur,'not_found',404);
+  // The office always keeps one active admin. The check sits inside the update so two admins cannot demote each other at once.
+  const keepsAdmin=role==='admin'&&active===1?1:0;
+  const done=await db.batch([
+   stmt(db,"UPDATE staff SET name=?,email=?,role=?,active=?,pw=coalesce(?,pw) WHERE staff_id=? AND (?=1 OR EXISTS(SELECT 1 FROM staff o WHERE o.role='admin' AND o.active=1 AND o.staff_id!=staff.staff_id))",name,email,role,active,b.password?await hashPassword(b.password):null,cur.staff_id,keepsAdmin),
+   // A new role, a deactivation or a new password signs the member out everywhere. Both follow-ups run only if the update above did.
+   ...(role!==cur.role||active!==cur.active||b.password?[stmt(db,'DELETE FROM sessions WHERE staff_id=? AND EXISTS(SELECT 1 FROM staff WHERE staff_id=? AND role=? AND active=?)',cur.staff_id,cur.staff_id,role,active)]:[]),
+   stmt(db,'UPDATE cases SET owner=? WHERE owner_id=? AND EXISTS(SELECT 1 FROM staff WHERE staff_id=? AND role=? AND active=?)',name,cur.staff_id,cur.staff_id,role,active)]);
+  requireThat(done[0].meta.changes===1,'last_admin',409);return {staff_id:cur.staff_id};}
+ // Cases from before personal logins carry a free-text owner. The admin maps each name to a staff member once.
+ if(path==='/api/owners/legacy'&&method==='GET'){adminOnly(me);return all(db,'SELECT owner,count(*) cases FROM cases WHERE owner_id IS NULL GROUP BY owner ORDER BY owner');}
+ if(path==='/api/owners/map'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
+  const r=await stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE owner_id IS NULL AND owner=?',s.staff_id,s.name,clean(b.owner??'',100)).run();return {mapped:r.meta.changes};}
+ if(path==='/api/clients'&&method==='GET')return isAdmin(me)?all(db,'SELECT * FROM clients ORDER BY name'):all(db,`SELECT cl.* FROM clients cl WHERE ${CLIENT_SCOPE} ORDER BY cl.name`,me.staff_id,me.staff_id);
  const clientMatch=path.match(/^\/api\/clients\/([\w-]+)$/);
- if(clientMatch&&method==='POST'){const id=clientMatch[1],b=await body(req),r=clientFields(b);requireThat(await one(db,'SELECT client_id FROM clients WHERE client_id=?',id),'not_found',404);
+ if(clientMatch&&method==='POST'){const id=clientMatch[1],b=await body(req),r=clientFields(b);requireThat(await visibleClient(db,me,id),'not_found',404);
+  // A client that also has someone else's case is edited by an admin.
+  if(!isAdmin(me))requireThat(!await one(db,'SELECT 1 FROM cases WHERE client_id=? AND (owner_id IS NULL OR owner_id!=?)',id,me.staff_id),'forbidden',403);
   requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=? AND client_id!=?',r.reference,id),'duplicate_reference',409);
   await stmt(db,"UPDATE clients SET name=?,reference=?,business_number=?,email=?,phone=?,status=?,tags=?,notes=?,updated_at=? WHERE client_id=?",...Object.values(r),now(),id).run();return {client_id:id};}
  if(path==='/api/settings'&&method==='GET')return settings(db);
- if(path==='/api/settings'&&method==='POST'){const b=await body(req),w=Number(b.warning_days),u=Number(b.urgent_days),t=clean(b.whatsapp_template||'',1000);
+ if(path==='/api/settings'&&method==='POST'){adminOnly(me);const b=await body(req),w=Number(b.warning_days),u=Number(b.urgent_days),t=clean(b.whatsapp_template||'',1000);
   requireThat(Number.isInteger(w)&&Number.isInteger(u)&&u>=0&&u<w&&w<=60,'invalid_deadline_days');
   requireThat([...t.matchAll(/\{([^{}]*)\}/g)].every(m=>PLACEHOLDERS.includes(m[1])),'invalid_template_placeholder');
   requireThat(!b.email||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email));
   await stmt(db,'UPDATE settings SET office_name=?,office_size=?,manager_name=?,phone=?,email=?,address=?,warning_days=?,urgent_days=?,whatsapp_template=?,updated_at=? WHERE id=1',
    clean(b.office_name||'',120),clean(b.office_size||'',40),clean(b.manager_name||'',120),clean(b.phone||'',40),clean(b.email||'',254),clean(b.address||'',200),w,u,t,now()).run();return settings(db);}
- if(path==='/api/settings/logo'&&method==='POST'){const b=await body(req);
+ if(path==='/api/settings/logo'&&method==='POST'){adminOnly(me);const b=await body(req);
   if(!b.data){await db.batch([stmt(db,'DELETE FROM logo WHERE id=1'),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
   let bytes;try{bytes=Uint8Array.from(atob(String(b.data)),ch=>ch.charCodeAt(0));}catch{throw new HttpError(400,'invalid_file');}
   requireThat(bytes.length>=8&&bytes.length<=200*1024,'logo_too_large',413);
@@ -205,31 +284,46 @@ async function handle(req,env) {
   // Store a re-encoded copy of the verified bytes, never the caller's string.
   let bin='';for(const x of bytes)bin+=String.fromCharCode(x);
   await db.batch([stmt(db,'INSERT INTO logo(id,mime,data) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data',mime,btoa(bin)),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
- if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=?',b.reference),'duplicate_reference',409);await insertClient(db,id,b).run();return {client_id:id};}
- if(path==='/api/cases'&&method==='GET')return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) ORDER BY c.last_activity DESC`).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,'SELECT case_id,required,status FROM requirements');
-  return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});
- if(path==='/api/cases'&&method==='POST'){const x=await caseStatements(db,await body(req),env);await db.batch(x.statements);return {case_id:x.id,link:SITE+'client.html#'+x.token};}
+ if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=?',b.reference),'duplicate_reference',409);await insertClient(db,id,b,me.staff_id).run();return {client_id:id};}
+ if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,st.name owner_name,(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
+  return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});}
+ if(path==='/api/cases'&&method==='POST'){const b=await body(req);
+  // A manager always opens cases for themselves. An admin can hand a case to any active staff member.
+  const owner=isAdmin(me)&&b.owner_id?await activeStaff(db,b.owner_id):{staff_id:me.staff_id,name:me.name};
+  const x=await caseStatements(db,b,env,me,owner);await db.batch(x.statements);return {case_id:x.id,link:SITE+'client.html#'+x.token};}
  if(path==='/api/catalog'&&method==='GET')return all(db,'SELECT * FROM document_catalog ORDER BY name');
- if(path==='/api/catalog'&&method==='POST'){const b=await body(req),id=b.document_id||uid();await stmt(db,'INSERT INTO document_catalog(document_id,name,description,active) VALUES (?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET name=excluded.name,description=excluded.description,active=excluded.active',id,clean(b.name,160,true),clean(b.description||'',500),b.active===false?0:1).run();return {document_id:id};}
+ if(path==='/api/catalog'&&method==='POST'){adminOnly(me);const b=await body(req),id=b.document_id||uid();await stmt(db,'INSERT INTO document_catalog(document_id,name,description,active) VALUES (?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET name=excluded.name,description=excluded.description,active=excluded.active',id,clean(b.name,160,true),clean(b.description||'',500),b.active===false?0:1).run();return {document_id:id};}
  if(path==='/api/templates'&&method==='GET'){const rows=await all(db,'SELECT * FROM templates ORDER BY name');for(const r of rows)r.items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',r.template_id);return rows;}
- if(path==='/api/templates'&&method==='POST'){const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40);const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)];for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,r.document_id,r.required?1:0,r.max_files,i));}await db.batch(statements);return {template_id:id};}
- const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|status|reminder|reconcile))?$/);
- if(match){const id=match[1],action=match[2],c=await one(db,'SELECT * FROM cases WHERE case_id=?',id);requireThat(c,'not_found',404);
+ if(path==='/api/templates'&&method==='POST'){adminOnly(me);const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40,'requirements_required');
+  const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)],used=new Set();
+  // A document typed by name inside a template joins the shared document library, or reuses the entry with the same name.
+  const library=await all(db,'SELECT document_id,name FROM document_catalog');
+  for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);let doc=r.document_id;
+   if(doc)requireThat(library.some(x=>x.document_id===doc),'not_found',404);
+   else{const name=clean(r.name,160,true),found=library.find(x=>x.name.trim().toLowerCase()===name.toLowerCase());doc=found?.document_id||uid();if(!found){library.push({document_id:doc,name});statements.push(stmt(db,'INSERT INTO document_catalog(document_id,name) VALUES (?,?)',doc,name));}}
+   requireThat(!used.has(doc),'duplicate_document',409);used.add(doc);
+   statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,doc,r.required?1:0,r.max_files,i));}
+  await db.batch(statements);return {template_id:id};}
+ const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|status|reminder|reconcile|owner))?$/);
+ if(match){const id=match[1],action=match[2],c=await ownCase(db,me,id);
+ // An admin may hand the case to someone else mid-request. Writes repeat the ownership check in SQL.
+ const mine='EXISTS(SELECT 1 FROM cases WHERE case_id=? AND (?=1 OR owner_id=?))',mineArgs=[id,isAdmin(me)?1:0,me.staff_id];
  if(!action&&method==='GET'){await expirePending(db,id);return caseView(db,id,true);}
  if(action==='link'&&method==='GET')return {link:await portalLink(env,db,id)};
  // A leaked link is revoked by moving the case to a new link version. The old token stops matching token_hash.
  if(action==='revoke-link'&&method==='POST'){const v=c.link_version+1,t=await caseLinkToken(id,v,env.PORTAL_LINK_KEY);
-  const done=await db.batch([stmt(db,'UPDATE cases SET link_version=?,token_hash=? WHERE case_id=? AND link_version=?',v,await hash(t),id,c.link_version),event(db,id,'link_revoked')]);
+  const done=await db.batch([stmt(db,`UPDATE cases SET link_version=?,token_hash=? WHERE case_id=? AND link_version=? AND ${mine}`,v,await hash(t),id,c.link_version,...mineArgs),stmt(db,`INSERT INTO events(event_id,case_id,action,actor_type,actor_id) SELECT ?,?,'link_revoked','staff',? WHERE EXISTS(SELECT 1 FROM cases WHERE case_id=? AND link_version=?)`,uid(),id,me.staff_id,id,v)]);
   requireThat(done[0].meta.changes===1,'conflict',409);return {link:SITE+'client.html#'+t};}
- if(action==='status'&&method==='POST'){const b=await body(req);requireThat(['closed','archived','reopen'].includes(b.status));await db.batch([stmt(db,'UPDATE cases SET status=?,closed_at=? WHERE case_id=?',b.status==='reopen'?'collecting':b.status,b.status==='reopen'?null:now(),id),syncCase(db,id),event(db,id,'case_status',b.status)]);return {ok:true};}
+ if(action==='status'&&method==='POST'){const b=await body(req);requireThat(['closed','archived','reopen'].includes(b.status));const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,'case_status',?,'staff',? WHERE ${mine}`,uid(),id,b.status,me.staff_id,...mineArgs),stmt(db,`UPDATE cases SET status=?,closed_at=? WHERE case_id=? AND ${mine}`,b.status==='reopen'?'collecting':b.status,b.status==='reopen'?null:now(),id,...mineArgs),syncCase(db,id)]);requireThat(done[1].meta.changes===1,'not_found',404);return {ok:true};}
+ if(action==='owner'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
+  await db.batch([stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE case_id=?',s.staff_id,s.name,id),event(db,id,'owner_changed',s.name,actor)]);return caseView(db,id,true);}
  active(c);
- if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle="NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending')",rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,?,? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),rq),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=? AND ${idle}`,b.status,message,rq,rq),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
+ if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle=`NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending') AND ${mine}`,rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,?,?,'staff',? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),me.staff_id,rq,...mineArgs),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq,...mineArgs)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=? AND ${idle}`,b.status,message,rq,rq,...mineArgs),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
  if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),x=await settings(db),link=await portalLink(env,db,id),{missing,text}=reminderText(x,view,link);requireThat(missing.length,'nothing_missing',409);
-  await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', ')).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
+  await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', '),actor).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
- if(path==='/api/csv/export'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
- if(path==='/api/csv/import'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const rows=parseCSV(b.csv),errors=[],statements=[],seen=new Set();for(const [i,r]of rows.entries()){try{if(b.entity==='clients'){clientFields(r);requireThat(!seen.has(r.reference)&&!await one(db,'SELECT client_id FROM clients WHERE reference=?',r.reference),'duplicate_reference',409);seen.add(r.reference);statements.push(insertClient(db,uid(),r));}else{requireThat(r.template_id,'template_required');requireThat(!r.case_id||!seen.has(r.case_id),'duplicate_case',409);if(r.case_id){requireThat(!await one(db,'SELECT case_id FROM cases WHERE case_id=?',r.case_id),'duplicate_case',409);seen.add(r.case_id);}const x=await caseStatements(db,r,env);statements.push(...x.statements);}}catch(e){errors.push({row:i+2,error:e.message});}}if(errors.length)return {imported:0,errors};requireThat(rows.length<=40,'import_limit_40');await db.batch(statements);return {imported:rows.length,errors:[]};}
+ if(path==='/api/csv/export'&&method==='POST'){adminOnly(me);const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','period_start','period_end','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
  throw new HttpError(404,'not_found');
 }
 export default {async fetch(req,env){const path=new URL(req.url).pathname;

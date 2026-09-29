@@ -16,6 +16,24 @@ export async function caseToken(caseId, secret) {
  const key = await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
  return Array.from(new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(caseId))),b=>b.toString(16).padStart(2,'0')).join('');
 }
+// Workers caps PBKDF2 at 100k iterations. The count is stored per password so it can be lowered or raised later.
+export const PBKDF2_ITERATIONS = 100000;
+const hex = buf => Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2,'0')).join('');
+export function validPassword(p) { return typeof p === 'string' && p.length >= 8 && p.length <= 200; }
+export async function hashPassword(password, iter = PBKDF2_ITERATIONS, salt = crypto.getRandomValues(new Uint8Array(16))) {
+ const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+ const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter }, key, 256);
+ return JSON.stringify({ alg: 'pbkdf2-sha256', iter, salt: hex(salt), hash: hex(bits) });
+}
+export async function checkPassword(password, stored) {
+ let r; try { r = JSON.parse(stored); } catch { return false; }
+ if (r?.alg !== 'pbkdf2-sha256' || !Number.isInteger(r.iter) || r.iter < 1 || r.iter > PBKDF2_ITERATIONS || !/^[0-9a-f]{32}$/.test(r.salt)) return false;
+ const salt = Uint8Array.from(r.salt.match(/../g), h => parseInt(h, 16));
+ const got = JSON.parse(await hashPassword(String(password), r.iter, salt)).hash;
+ let diff = got.length ^ String(r.hash).length;
+ for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ String(r.hash).charCodeAt(i);
+ return diff === 0;
+}
 // Version 1 keeps the original formula so existing client links keep working. Revoking a link bumps the version.
 export function caseLinkToken(caseId, version, secret) {
  return caseToken(Number(version) > 1 ? `${caseId}:v${version}` : caseId, secret);
@@ -57,12 +75,13 @@ export async function validateFile(file) {
  const filename = file.name.normalize('NFKC').replace(/[\\/<>:"|?*\u0000-\u001f\u202a-\u202e\u2066-\u2069]/g,'_').slice(-160);
  return {filename,mime,size:file.size,contentHash:await hash(bytes)};
 }
-export function deriveStatus(requirements, completed, current = 'collecting') {
+// Mirrors syncCase in portal.mjs. The case waits for the office as soon as every required document is sent.
+export function deriveStatus(requirements, current = 'collecting') {
  if (['closed','archived'].includes(current)) return current;
  if (requirements.some(r=>r.status === 'correction')) return 'action_required';
  // Optional requirements can remain missing. Once uploaded they must also be reviewed.
  if (requirements.length && requirements.every(r=>r.status==='approved' || (!r.required && r.status==='missing'))) return 'ready_for_work';
- if (completed && requirements.every(r=>!r.required || ['uploaded','approved'].includes(r.status))) return 'client_completed';
+ if (requirements.every(r=>!r.required || ['uploaded','approved'].includes(r.status))) return 'client_completed';
  return 'collecting';
 }
 export function parseCSV(text) {

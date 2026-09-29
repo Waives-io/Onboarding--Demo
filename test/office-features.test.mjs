@@ -5,7 +5,7 @@ import { hash, caseToken, localDate } from '../worker/domain.mjs';
 import { d1 } from './support.mjs';
 
 const SITE = 'https://waives-io.github.io';
-const OFFICE_TOKEN = 'o'.repeat(64);
+const OFFICE_TOKEN = 'e'.repeat(64);
 const KEY = 'l'.repeat(32);
 const env = db => ({ DB: db, PORTAL_LINK_KEY: KEY, PORTAL_BRIDGE_ENABLED: 'true' });
 const addDays = n => { const d = new Date(localDate() + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -16,7 +16,8 @@ async function seed({ phone = '050-123-4567', due = addDays(30) } = {}) {
   db.raw.prepare("INSERT INTO clients(client_id,name,reference) VALUES ('cl2','Other','R2')").run();
   db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,token_hash) VALUES ('case1','cl1','Monthly','custom','2026-08',?,?)").run(due, await hash(await caseToken('case1', KEY)));
   db.raw.prepare("INSERT INTO requirements(requirement_id,case_id,name,required,max_files,position) VALUES ('r1','case1','Bank',1,1,0),('r2','case1','Sales',1,1,1),('r3','case1','Extra',0,1,2)").run();
-  db.raw.prepare('INSERT INTO sessions VALUES (?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000);
+  db.raw.prepare("INSERT INTO staff(staff_id,name,email,role,pw) VALUES ('admin1','Admin','admin@x.test','admin','-')").run();
+  db.raw.prepare('INSERT INTO sessions(token_hash,expires_at,staff_id) VALUES (?,?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000, 'admin1');
   return db;
 }
 async function call(e, path, { method = 'GET', data, auth = 'office', caseToken: ct } = {}) {
@@ -114,4 +115,38 @@ test('settings require an office session', async () => {
   const e = env(await seed());
   assert.equal((await call(e, '/api/settings', { auth: 'none' })).status, 401);
   assert.equal((await call(e, '/api/settings/logo', { method: 'POST', auth: 'none', data: { data: PNG } })).status, 401);
+});
+
+test('a document typed inside a template joins the library once', async () => {
+  const db = await seed(), e = env(db);
+  const r = await call(e, '/api/templates', { method: 'POST', data: { name: 'תבנית בדיקה', items: [
+    { document_id: 'bank', required: true, max_files: 1 },
+    { name: 'אישור ניכוי במקור', required: true, max_files: 1 },
+    { name: 'דוח מכירות', required: false, max_files: 3 },
+  ] } });
+  assert.equal(r.status, 200);
+  const lib = db.raw.prepare("SELECT document_id FROM document_catalog WHERE name='אישור ניכוי במקור'").all();
+  assert.equal(lib.length, 1);
+  assert.equal(db.raw.prepare("SELECT document_id FROM template_items WHERE template_id=? AND position=2").get(r.body.template_id).document_id, 'sales');
+  const dup = await call(e, '/api/templates', { method: 'POST', data: { name: 'x', items: [{ document_id: 'bank', required: true, max_files: 1 }, { name: 'תדפיס בנק', required: true, max_files: 1 }] } });
+  assert.equal(dup.body.error, 'duplicate_document');
+  const again = await call(e, '/api/templates', { method: 'POST', data: { name: 'y', items: [{ name: 'אישור ניכוי במקור', required: true, max_files: 1 }] } });
+  assert.equal(again.status, 200);
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM document_catalog WHERE name='אישור ניכוי במקור'").get().n, 1);
+});
+
+test('a case period is a validated date range', async () => {
+  const e = env(await seed());
+  const base = { client_id: 'cl2', name: 'חודשי', type: 'הנהלת חשבונות', due_date: addDays(20), requirements: [{ name: 'Bank', required: true, max_files: 1 }] };
+  const ok = await call(e, '/api/cases', { method: 'POST', data: { ...base, period_start: '2026-09-01', period_end: '2026-09-30' } });
+  assert.equal(ok.status, 200);
+  const c = (await call(e, '/api/cases')).body.find(x => x.case_id === ok.body.case_id);
+  assert.deepEqual([c.reporting_period, c.period_start, c.period_end], ['01/09/2026–30/09/2026', '2026-09-01', '2026-09-30']);
+  assert.equal((await call(e, '/api/cases', { method: 'POST', data: { ...base, period_start: '2026-09-30', period_end: '2026-09-01' } })).body.error, 'invalid_period');
+});
+
+test('an impossible date is a clear error, not a crash', async () => {
+  const e = env(await seed());
+  const r = await call(e, '/api/cases', { method: 'POST', data: { client_id: 'cl2', name: 'x', type: 't', due_date: addDays(5), period_start: '2026-99-99', period_end: '2026-99-99', requirements: [{ name: 'A', required: true, max_files: 1 }] } });
+  assert.deepEqual([r.status, r.body.error], [400, 'invalid_period']);
 });

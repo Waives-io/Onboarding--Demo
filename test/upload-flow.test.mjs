@@ -6,7 +6,7 @@ import { d1 } from './support.mjs';
 
 const SITE = 'https://waives-io.github.io';
 const CASE_TOKEN = 'c'.repeat(64);
-const OFFICE_TOKEN = 'o'.repeat(64);
+const OFFICE_TOKEN = 'e'.repeat(64);
 const env = db => ({
   DB: db, PORTAL_BRIDGE_ENABLED: 'true', MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test',
   MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_LINK_KEY: 'l'.repeat(32),
@@ -18,7 +18,8 @@ async function seed(requirements = [{ id: 'req-a', required: 1, max: 1 }]) {
   db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,token_hash) VALUES ('case1','cl1','Monthly','custom','2026-08','2026-10-01',?)").run(await hash(CASE_TOKEN));
   for (const [i, r] of requirements.entries())
     db.raw.prepare('INSERT INTO requirements(requirement_id,case_id,name,required,max_files,position) VALUES (?,?,?,?,?,?)').run(r.id, 'case1', r.id, r.required, r.max, i);
-  db.raw.prepare('INSERT INTO sessions VALUES (?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000);
+  db.raw.prepare("INSERT INTO staff(staff_id,name,email,role,pw) VALUES ('admin1','Admin','admin@x.test','admin','-')").run();
+  db.raw.prepare('INSERT INTO sessions(token_hash,expires_at,staff_id) VALUES (?,?,?)').run(await hash(OFFICE_TOKEN), Date.now() + 3600000, 'admin1');
   return db;
 }
 
@@ -227,30 +228,38 @@ test('an upload claimed after the review checks blocks the review', async t => {
   assert.equal(eventCount(db, 'approved'), 0);
 });
 
-// Finding 4: only the client's "finished" action marks the case client_completed.
+// The case waits for the office as soon as every required document is sent. There is no separate "finished" step.
 
-test('uploading a correction does not mark the case completed by itself', async t => {
+test('the case waits for the office only once every required document is sent', async t => {
+  const db = await seed([{ id: 'req-a', required: 1, max: 1 }, { id: 'req-b', required: 1, max: 1 }]), e = env(db);
+  mockMake(t, form => receiptFor(form.get('submission_id')));
+  await upload(e, 'req-a');
+  assert.equal(caseRow(db).status, 'collecting');
+  await upload(e, 'req-b', undefined, 'two');
+  assert.equal(caseRow(db).status, 'client_completed');
+  assert.notEqual(caseRow(db).client_completed_at, null);
+  assert.equal(eventCount(db, 'client_completed'), 1);
+  await upload(e, 'req-b', undefined, 'extra');
+  assert.equal(eventCount(db, 'client_completed'), 1);
+});
+
+test('a fixed correction sends the case back to the office', async t => {
   const db = await seed(), e = env(db);
   mockMake(t, form => receiptFor(form.get('submission_id')));
   await upload(e, 'req-a');
-  await call(e, '/api/portal/complete', { method: 'POST' });
   await call(e, '/api/cases/case1/review', { method: 'POST', data: { requirement_id: 'req-a', status: 'correction', message: 'Wrong month' }, office: true });
   assert.equal(caseRow(db).status, 'action_required');
   const fix = await upload(e, 'req-a', undefined, 'fixed');
   assert.equal(fix.body.status, 'stored');
-  assert.deepEqual({ ...caseRow(db) }, { status: 'collecting', client_completed_at: null });
-  await call(e, '/api/portal/complete', { method: 'POST' });
   assert.equal(caseRow(db).status, 'client_completed');
 });
 
-test('an extra optional upload after "finished" keeps the case completed', async t => {
+test('an extra optional upload keeps the case waiting for the office', async t => {
   const db = await seed([{ id: 'req-a', required: 1, max: 1 }, { id: 'req-opt', required: 0, max: 1 }]), e = env(db);
   mockMake(t, form => receiptFor(form.get('submission_id')));
   await upload(e, 'req-a');
-  await call(e, '/api/portal/complete', { method: 'POST' });
   assert.equal(caseRow(db).status, 'client_completed');
   await upload(e, 'req-opt', undefined, 'optional');
   assert.equal(reqStatus(db, 'req-opt'), 'uploaded');
   assert.equal(caseRow(db).status, 'client_completed');
-  assert.notEqual(caseRow(db).client_completed_at, null);
 });
