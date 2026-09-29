@@ -115,3 +115,31 @@ test('settings require an office session', async () => {
   assert.equal((await call(e, '/api/settings', { auth: 'none' })).status, 401);
   assert.equal((await call(e, '/api/settings/logo', { method: 'POST', auth: 'none', data: { data: PNG } })).status, 401);
 });
+
+test('a document typed inside a template joins the library once', async () => {
+  const db = await seed(), e = env(db);
+  const r = await call(e, '/api/templates', { method: 'POST', data: { name: 'תבנית בדיקה', items: [
+    { document_id: 'bank', required: true, max_files: 1 },
+    { name: 'אישור ניכוי במקור', required: true, max_files: 1 },
+    { name: 'דוח מכירות', required: false, max_files: 3 },
+  ] } });
+  assert.equal(r.status, 200);
+  const lib = db.raw.prepare("SELECT document_id FROM document_catalog WHERE name='אישור ניכוי במקור'").all();
+  assert.equal(lib.length, 1);
+  assert.equal(db.raw.prepare("SELECT document_id FROM template_items WHERE template_id=? AND position=2").get(r.body.template_id).document_id, 'sales');
+  const dup = await call(e, '/api/templates', { method: 'POST', data: { name: 'x', items: [{ document_id: 'bank', required: true, max_files: 1 }, { name: 'תדפיס בנק', required: true, max_files: 1 }] } });
+  assert.equal(dup.body.error, 'duplicate_document');
+  const again = await call(e, '/api/templates', { method: 'POST', data: { name: 'y', items: [{ name: 'אישור ניכוי במקור', required: true, max_files: 1 }] } });
+  assert.equal(again.status, 200);
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM document_catalog WHERE name='אישור ניכוי במקור'").get().n, 1);
+});
+
+test('a case period is a validated date range', async () => {
+  const e = env(await seed());
+  const base = { client_id: 'cl2', name: 'חודשי', type: 'הנהלת חשבונות', due_date: addDays(20), requirements: [{ name: 'Bank', required: true, max_files: 1 }] };
+  const ok = await call(e, '/api/cases', { method: 'POST', data: { ...base, period_start: '2026-09-01', period_end: '2026-09-30' } });
+  assert.equal(ok.status, 200);
+  const c = (await call(e, '/api/cases')).body.find(x => x.case_id === ok.body.case_id);
+  assert.deepEqual([c.reporting_period, c.period_start, c.period_end], ['01/09/2026–30/09/2026', '2026-09-01', '2026-09-30']);
+  assert.equal((await call(e, '/api/cases', { method: 'POST', data: { ...base, period_start: '2026-09-30', period_end: '2026-09-01' } })).body.error, 'invalid_period');
+});

@@ -35,7 +35,7 @@ function syncCase(db,id) {
  WHEN status IN ('closed','archived') THEN status
  WHEN EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND status='correction') THEN 'action_required'
  WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND status!='approved' AND (required=1 OR status!='missing')) THEN 'ready_for_work'
- WHEN client_completed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
+ WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
 const DEFAULT_REMINDER='שלום {client},\nלהשלמת {case} ({period}) נדרשים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
@@ -78,14 +78,19 @@ function insertClient(db,id,b) {const r=clientFields(b);return stmt(db,'INSERT I
 async function caseStatements(db,b,env) {
  const id=b.case_id||uid(); requireThat(/^[a-zA-Z0-9-]{1,64}$/.test(id));
  requireThat(await one(db,'SELECT client_id FROM clients WHERE client_id=?',b.client_id),'client_not_found',404);
- const name=clean(b.name,160,true),type=clean(b.type||'custom',80,true),category=clean(b.category||'',80),period=clean(b.reporting_period,80,true),owner=clean(b.owner||'',100),due=clean(b.due_date,10,true);
- requireThat(/^\d{4}-\d{2}-\d{2}$/.test(due)&&new Date(due).toISOString().slice(0,10)===due,'invalid_due_date');
+ const isDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&new Date(v).toISOString().slice(0,10)===v;
+ const name=clean(b.name,160,true),type=clean(b.type||'custom',80,true),category=clean(b.category||'',80),owner=clean(b.owner||'',100),due=clean(b.due_date,10,true);
+ requireThat(isDate(due),'invalid_due_date');
+ // The office picks a date range. Imports may still send a free-text period.
+ const start=b.period_start||null,end=b.period_end||null;
+ if(start||end)requireThat(isDate(start)&&isDate(end)&&start<=end,'invalid_period');
+ const period=start?`${ddmmyyyy(start)}–${ddmmyyyy(end)}`:clean(b.reporting_period,80,true);
  let items=b.requirements;
  if(!items && b.template_id)items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',b.template_id);
  requireThat(Array.isArray(items)&&items.length>0&&items.length<=40,'requirements_required');
  requireThat(items.some(r=>r.required===true||r.required===1),'mandatory_requirement_required');
  const token=await caseToken(id,env.PORTAL_LINK_KEY);
- const statements=[stmt(db,'INSERT INTO cases(case_id,client_id,name,type,category,reporting_period,due_date,owner,token_hash) VALUES (?,?,?,?,?,?,?,?,?)',id,b.client_id,name,type,category,period,due,owner,await hash(token))];
+ const statements=[stmt(db,'INSERT INTO cases(case_id,client_id,name,type,category,reporting_period,period_start,period_end,due_date,owner,token_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)',id,b.client_id,name,type,category,period,start,end,due,owner,await hash(token))];
  for(const [i,r] of items.entries()) {const max=Number(r.max_files||1);requireThat(Number.isInteger(max)&&max>=1&&max<=20);statements.push(stmt(db,'INSERT INTO requirements(requirement_id,case_id,document_id,name,required,max_files,position) VALUES (?,?,?,?,?,?,?)',uid(),id,r.document_id||null,clean(r.name,160,true),r.required?1:0,max,i));}
  statements.push(event(db,id,'case_created'));return {id,token,statements};
 }
@@ -212,7 +217,16 @@ async function handle(req,env) {
  if(path==='/api/catalog'&&method==='GET')return all(db,'SELECT * FROM document_catalog ORDER BY name');
  if(path==='/api/catalog'&&method==='POST'){const b=await body(req),id=b.document_id||uid();await stmt(db,'INSERT INTO document_catalog(document_id,name,description,active) VALUES (?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET name=excluded.name,description=excluded.description,active=excluded.active',id,clean(b.name,160,true),clean(b.description||'',500),b.active===false?0:1).run();return {document_id:id};}
  if(path==='/api/templates'&&method==='GET'){const rows=await all(db,'SELECT * FROM templates ORDER BY name');for(const r of rows)r.items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',r.template_id);return rows;}
- if(path==='/api/templates'&&method==='POST'){const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40);const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)];for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,r.document_id,r.required?1:0,r.max_files,i));}await db.batch(statements);return {template_id:id};}
+ if(path==='/api/templates'&&method==='POST'){const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40,'requirements_required');
+  const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)],used=new Set();
+  // A document typed by name inside a template joins the shared document library, or reuses the entry with the same name.
+  const library=await all(db,'SELECT document_id,name FROM document_catalog');
+  for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);let doc=r.document_id;
+   if(doc)requireThat(library.some(x=>x.document_id===doc),'not_found',404);
+   else{const name=clean(r.name,160,true),found=library.find(x=>x.name.trim().toLowerCase()===name.toLowerCase());doc=found?.document_id||uid();if(!found){library.push({document_id:doc,name});statements.push(stmt(db,'INSERT INTO document_catalog(document_id,name) VALUES (?,?)',doc,name));}}
+   requireThat(!used.has(doc),'duplicate_document',409);used.add(doc);
+   statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,doc,r.required?1:0,r.max_files,i));}
+  await db.batch(statements);return {template_id:id};}
  const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|status|reminder|reconcile))?$/);
  if(match){const id=match[1],action=match[2],c=await one(db,'SELECT * FROM cases WHERE case_id=?',id);requireThat(c,'not_found',404);
  if(!action&&method==='GET'){await expirePending(db,id);return caseView(db,id,true);}

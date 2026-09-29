@@ -57,12 +57,13 @@ export async function validateFile(file) {
  const filename = file.name.normalize('NFKC').replace(/[\\/<>:"|?*\u0000-\u001f\u202a-\u202e\u2066-\u2069]/g,'_').slice(-160);
  return {filename,mime,size:file.size,contentHash:await hash(bytes)};
 }
-export function deriveStatus(requirements, completed, current = 'collecting') {
+// Mirrors syncCase in portal.mjs. The case waits for the office as soon as every required document is sent.
+export function deriveStatus(requirements, current = 'collecting') {
  if (['closed','archived'].includes(current)) return current;
  if (requirements.some(r=>r.status === 'correction')) return 'action_required';
  // Optional requirements can remain missing. Once uploaded they must also be reviewed.
  if (requirements.length && requirements.every(r=>r.status==='approved' || (!r.required && r.status==='missing'))) return 'ready_for_work';
- if (completed && requirements.every(r=>!r.required || ['uploaded','approved'].includes(r.status))) return 'client_completed';
+ if (requirements.every(r=>!r.required || ['uploaded','approved'].includes(r.status))) return 'client_completed';
  return 'collecting';
 }
 export function parseCSV(text) {
