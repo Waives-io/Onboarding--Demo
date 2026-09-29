@@ -78,7 +78,7 @@ function insertClient(db,id,b) {const r=clientFields(b);return stmt(db,'INSERT I
 async function caseStatements(db,b,env) {
  const id=b.case_id||uid(); requireThat(/^[a-zA-Z0-9-]{1,64}$/.test(id));
  requireThat(await one(db,'SELECT client_id FROM clients WHERE client_id=?',b.client_id),'client_not_found',404);
- const isDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&new Date(v).toISOString().slice(0,10)===v;
+ const isDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
  const name=clean(b.name,160,true),type=clean(b.type||'custom',80,true),category=clean(b.category||'',80),owner=clean(b.owner||'',100),due=clean(b.due_date,10,true);
  requireThat(isDate(due),'invalid_due_date');
  // The office picks a date range. Imports may still send a free-text period.
@@ -121,6 +121,9 @@ async function storeReceipt(db,u,receipt) {
  stmt(db,`UPDATE cases SET completed_at=NULL WHERE case_id=? AND ${pending}`,r.case_id,sid),
  stmt(db,'UPDATE cases SET drive_folder_id=coalesce(drive_folder_id,?) WHERE case_id=?',receipt.drive_folder_id,r.case_id),
  syncCase(db,r.case_id),
+ // The last required document moves the case to the office. Record that moment once, like the old "finished" step did.
+ stmt(db,"INSERT INTO events(event_id,case_id,action,detail) SELECT ?,case_id,'client_completed','' FROM cases WHERE case_id=? AND status='client_completed' AND client_completed_at IS NULL",uid(),r.case_id),
+ stmt(db,"UPDATE cases SET client_completed_at=? WHERE case_id=? AND status='client_completed' AND client_completed_at IS NULL",now(),r.case_id),
  stmt(db,`INSERT INTO events(event_id,case_id,action,detail) SELECT ?,?,CASE WHEN ${pending} THEN 'upload_stored' ELSE 'upload_stored_late' END,? WHERE ${pending} OR ${failed}`,uid(),r.case_id,sid,u.filename,sid,sid),
  stmt(db,"UPDATE uploads SET state='stored',drive_file_id=?,drive_folder_id=?,stored_at=? WHERE submission_id=? AND state IN ('pending','failed')",receipt.drive_file_id,receipt.drive_folder_id,now(),sid)
  ]);
@@ -242,7 +245,7 @@ async function handle(req,env) {
   await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', ')).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
- if(path==='/api/csv/export'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
+ if(path==='/api/csv/export'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','period_start','period_end','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
  if(path==='/api/csv/import'&&method==='POST'){const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const rows=parseCSV(b.csv),errors=[],statements=[],seen=new Set();for(const [i,r]of rows.entries()){try{if(b.entity==='clients'){clientFields(r);requireThat(!seen.has(r.reference)&&!await one(db,'SELECT client_id FROM clients WHERE reference=?',r.reference),'duplicate_reference',409);seen.add(r.reference);statements.push(insertClient(db,uid(),r));}else{requireThat(r.template_id,'template_required');requireThat(!r.case_id||!seen.has(r.case_id),'duplicate_case',409);if(r.case_id){requireThat(!await one(db,'SELECT case_id FROM cases WHERE case_id=?',r.case_id),'duplicate_case',409);seen.add(r.case_id);}const x=await caseStatements(db,r,env);statements.push(...x.statements);}}catch(e){errors.push({row:i+2,error:e.message});}}if(errors.length)return {imported:0,errors};requireThat(rows.length<=40,'import_limit_40');await db.batch(statements);return {imported:rows.length,errors:[]};}
  throw new HttpError(404,'not_found');
 }

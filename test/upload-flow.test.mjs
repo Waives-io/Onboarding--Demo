@@ -236,6 +236,10 @@ test('the case waits for the office only once every required document is sent', 
   assert.equal(caseRow(db).status, 'collecting');
   await upload(e, 'req-b', undefined, 'two');
   assert.equal(caseRow(db).status, 'client_completed');
+  assert.notEqual(caseRow(db).client_completed_at, null);
+  assert.equal(eventCount(db, 'client_completed'), 1);
+  await upload(e, 'req-b', undefined, 'extra');
+  assert.equal(eventCount(db, 'client_completed'), 1);
 });
 
 test('a fixed correction sends the case back to the office', async t => {

@@ -143,3 +143,9 @@ test('a case period is a validated date range', async () => {
   assert.deepEqual([c.reporting_period, c.period_start, c.period_end], ['01/09/2026–30/09/2026', '2026-09-01', '2026-09-30']);
   assert.equal((await call(e, '/api/cases', { method: 'POST', data: { ...base, period_start: '2026-09-30', period_end: '2026-09-01' } })).body.error, 'invalid_period');
 });
+
+test('an impossible date is a clear error, not a crash', async () => {
+  const e = env(await seed());
+  const r = await call(e, '/api/cases', { method: 'POST', data: { client_id: 'cl2', name: 'x', type: 't', due_date: addDays(5), period_start: '2026-99-99', period_end: '2026-99-99', requirements: [{ name: 'A', required: true, max_files: 1 }] } });
+  assert.deepEqual([r.status, r.body.error], [400, 'invalid_period']);
+});
