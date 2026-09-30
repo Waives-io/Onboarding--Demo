@@ -54,7 +54,7 @@ header nav { position: fixed; z-index: 39; top: 100px; right: 0; bottom: 0; widt
 header nav button { width: 100%; padding: 11px 13px; border: 2px solid #fff; border-radius: 14px; background: linear-gradient(180deg, #fff 0%, #fffaf7 58%, #f7e9e2 100%); color: var(--brown); box-shadow: 0 4px 0 #d7b8aa, 0 8px 16px rgb(90 58 42 / 10%), inset 0 2px rgb(255 255 255 / 80%); text-align: right; text-shadow: 0 1px 0 rgb(255 255 255 / 70%); }
 header nav button:hover { border-color: #fff; background: linear-gradient(180deg, #fff 0%, #fff 58%, #f9eee9 100%); }
 header nav button:active { transform: translateY(4px); box-shadow: 0 0 0 #d7b8aa, 0 4px 9px rgb(90 58 42 / 9%), inset 0 2px rgb(255 255 255 / 80%); }
-header nav button.active { transform: translateY(3px); border-color: #fff0ed; background: linear-gradient(180deg, #ffb7b4 0%, #f58f91 58%, #ce666c 100%); color: #452326; box-shadow: 0 2px 0 #a64b52, 0 6px 13px rgb(166 75 82 / 20%), inset 0 3px rgb(255 255 255 / 34%); text-shadow: 0 1px 0 rgb(255 255 255 / 28%); }
+header nav button.active { transform: translateY(3px); border-color: #dce3e7; background: linear-gradient(180deg, #aeb9c0 0%, #93a1aa 58%, var(--iris) 100%); color: #24323a; font-weight: 800; box-shadow: 0 2px 0 #52636e, 0 6px 13px rgb(70 87 97 / 22%), inset 0 3px rgb(255 255 255 / 25%); text-shadow: 0 1px 0 rgb(255 255 255 / 38%); }
 .profile, .session-actions { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .avatar { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 50%; background: #ffe8e4; color: #713d36; font-weight: 700; }
 .avatar.teal { background: #ffe7e7; color: #71343c; }
