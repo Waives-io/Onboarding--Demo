@@ -75,9 +75,9 @@ test('a client can be edited and the reference stays unique', async () => {
   const ok = await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'Renamed', reference: 'R1', phone: '0521112233', email: 'a@b.co' } });
   assert.equal(ok.status, 200);
   assert.equal((await call(e, '/api/clients')).body.find(c => c.client_id === 'cl1').name, 'Renamed');
-  const dup = await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'X', reference: 'R2' } });
+  const dup = await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'X', reference: 'R2', phone: '0521112233', email: 'a@b.co' } });
   assert.equal(dup.body.error, 'duplicate_reference');
-  assert.equal((await call(e, '/api/clients/nope', { method: 'POST', data: { name: 'X', reference: 'R9' } })).status, 404);
+  assert.equal((await call(e, '/api/clients/nope', { method: 'POST', data: { name: 'X', reference: 'R9', phone: '0521112233', email: 'a@b.co' } })).status, 404);
 });
 
 test('revoking a link locks out the old one and the new one works', async () => {
@@ -149,4 +149,17 @@ test('an impossible date is a clear error, not a crash', async () => {
   const e = env(await seed());
   const r = await call(e, '/api/cases', { method: 'POST', data: { client_id: 'cl2', name: 'x', type: 't', due_date: addDays(5), period_start: '2026-99-99', period_end: '2026-99-99', requirements: [{ name: 'A', required: true, max_files: 1 }] } });
   assert.deepEqual([r.status, r.body.error], [400, 'invalid_period']);
+});
+
+test('a client needs a valid email and a reachable phone', async () => {
+  const db = await seed(), e = env(db);
+  const base = { name: 'New', reference: 'R7', phone: '0521112233', email: 'a@b.co' };
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, email: '' } })).body.error, 'invalid_fields');
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, email: 'not-an-email' } })).body.error, 'invalid_email');
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, phone: '' } })).body.error, 'invalid_fields');
+  for (const phone of ['03-1234567', '12345', '050-12'])
+    assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, phone } })).body.error, 'invalid_phone', phone);
+  for (const [i, phone] of ['050-123-4567', '+972 52 111 2233', '+44 20 7946 0958'].entries())
+    assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, reference: 'OK' + i, phone } })).status, 200, phone);
+  assert.equal((await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'Test Client', reference: 'R1', email: 'a@b.co', phone: '' } })).body.error, 'invalid_fields');
 });

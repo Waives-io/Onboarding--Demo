@@ -115,7 +115,7 @@ test('a manager opens cases only for themselves and for their own clients', asyn
   assert.equal(db.raw.prepare('SELECT owner_id FROM cases WHERE case_id=?').get(r.body.case_id).owner_id, 'm1');
   assert.equal((await call(e, '/api/cases', { method: 'POST', token: T.m1, data: newCase('cl2') })).body.error, 'client_not_found');
   // A client the manager creates is theirs before it has any case.
-  const cl = await call(e, '/api/clients', { method: 'POST', token: T.m1, data: { name: 'Fresh', reference: 'R9' } });
+  const cl = await call(e, '/api/clients', { method: 'POST', token: T.m1, data: { name: 'Fresh', reference: 'R9', phone: '0521112233', email: 'a@b.co' } });
   assert.equal((await call(e, '/api/cases', { method: 'POST', token: T.m1, data: newCase(cl.body.client_id) })).status, 200);
   // The admin can hand a new case to anyone active.
   const a = await call(e, '/api/cases', { method: 'POST', token: T.admin, data: newCase('cl2', { owner_id: 'm2' }) });
@@ -124,7 +124,7 @@ test('a manager opens cases only for themselves and for their own clients', asyn
 
 test('a manager edits a client only when all its cases are theirs', async () => {
   const db = await office(), e = env(db);
-  const edit = { name: 'Renamed', reference: 'R1' };
+  const edit = { name: 'Renamed', reference: 'R1', phone: '0521112233', email: 'a@b.co' };
   assert.equal((await call(e, '/api/clients/cl1', { method: 'POST', token: T.m1, data: edit })).status, 200);
   assert.equal((await call(e, '/api/clients/cl2', { method: 'POST', token: T.m1, data: { ...edit, reference: 'R2' } })).status, 404);
   db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,owner_id,token_hash) VALUES ('case4','cl1','x','custom','p','2026-12-01','m2','h4')").run();
