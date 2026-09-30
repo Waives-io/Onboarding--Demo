@@ -52,6 +52,10 @@ function reminderText(s,view,link) {
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
  return {missing,text:(s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m)};
 }
+// The office's last contact with the client about a case: when, how, and how many times.
+const contactSql=t=>`(SELECT count(*) FROM contacts WHERE case_id=${t}.case_id) contact_count,(SELECT max(created_at) FROM contacts WHERE case_id=${t}.case_id) last_contact_at,(SELECT channel FROM contacts WHERE case_id=${t}.case_id ORDER BY created_at DESC LIMIT 1) last_channel`;
+// One definition of "waiting for review" for the approve-all button, the route and its events.
+const REVIEWABLE="r.case_id=? AND r.status='uploaded' AND EXISTS(SELECT 1 FROM uploads u WHERE u.requirement_id=r.requirement_id AND u.state='stored') AND NOT EXISTS(SELECT 1 FROM uploads u WHERE u.requirement_id=r.requirement_id AND u.state='pending')";
 const caseMeta=(c,requirements,s,today)=>({...caseProgress(c.status,requirements),...deadlineState(c.due_date,c.status,today,s.warning_days,s.urgent_days)});
 // Every request re-reads the staff row, so a deactivated member or a role change takes effect at once.
 async function office(req,db) {
@@ -88,13 +92,13 @@ async function portal(req,db) {
  const c=await one(db,'SELECT cases.*,clients.name AS client_name,clients.reference AS client_reference,clients.email AS client_email FROM cases JOIN clients USING(client_id) WHERE token_hash=?',await hash(token)); requireThat(c,'unauthorized',401); return c;
 }
 async function caseView(db,id,isOffice=false) {
- const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
+ const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name,${contactSql('cases')} FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
  requireThat(c,'not_found',404); delete c.token_hash;
  const requirements=await all(db,'SELECT * FROM requirements WHERE case_id=? ORDER BY position',id);
  for(const r of requirements){r.uploads=await all(db,`SELECT submission_id,filename,mime_type,size,version,state,created_at,stored_at${isOffice?',drive_file_id,drive_folder_id':''} FROM uploads WHERE requirement_id=? ORDER BY version DESC`,r.requirement_id);if(!isOffice)delete r.drive_folder_id;}
  const meta=caseMeta(c,requirements,await settings(db),localDate());
  if(isOffice)meta.whatsapp=israeliMobile(c.phone);
- if(!isOffice){for(const k of ['email','phone','business_number','drive_folder_id','client_id','reference','link_version','owner','owner_id','owner_name'])delete c[k];}
+ if(!isOffice){for(const k of ['email','phone','business_number','drive_folder_id','client_id','reference','link_version','owner','owner_id','owner_name','contact_count','last_contact_at','last_channel'])delete c[k];}
  return {...c,...meta,requirements,...(isOffice?{events:await all(db,'SELECT e.*,s.name actor_name FROM events e LEFT JOIN staff s ON s.staff_id=e.actor_id WHERE e.case_id=? ORDER BY e.created_at DESC LIMIT 100',id)}:{})};
 }
 function clientFields(b) {
@@ -286,7 +290,7 @@ async function handle(req,env) {
   let bin='';for(const x of bytes)bin+=String.fromCharCode(x);
   await db.batch([stmt(db,'INSERT INTO logo(id,mime,data) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data',mime,btoa(bin)),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
  if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=?',b.reference),'duplicate_reference',409);await insertClient(db,id,b,me.staff_id).run();return {client_id:id};}
- if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,st.name owner_name,(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
+ if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,st.name owner_name,${contactSql('c')},(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
   return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});}
  if(path==='/api/cases'&&method==='POST'){const b=await body(req);
   // A manager always opens cases for themselves. An admin can hand a case to any active staff member.
@@ -305,7 +309,7 @@ async function handle(req,env) {
    requireThat(!used.has(doc),'duplicate_document',409);used.add(doc);
    statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,doc,r.required?1:0,r.max_files,i));}
   await db.batch(statements);return {template_id:id};}
- const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|status|reminder|reconcile|owner))?$/);
+ const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|reconcile|owner|contacts))?$/);
  if(match){const id=match[1],action=match[2],c=await ownCase(db,me,id);
  // An admin may hand the case to someone else mid-request. Writes repeat the ownership check in SQL.
  const mine='EXISTS(SELECT 1 FROM cases WHERE case_id=? AND (?=1 OR owner_id=?))',mineArgs=[id,isAdmin(me)?1:0,me.staff_id];
@@ -320,6 +324,22 @@ async function handle(req,env) {
   await db.batch([stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE case_id=?',s.staff_id,s.name,id),event(db,id,'owner_changed',s.name,actor)]);return caseView(db,id,true);}
  active(c);
  if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle=`NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending') AND ${mine}`,rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,?,?,'staff',? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),me.staff_id,rq,...mineArgs),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq,...mineArgs)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=? AND ${idle}`,b.status,message,rq,rq,...mineArgs),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
+ // The office opened WhatsApp or email with the link, or copied it. Retries with the same send_id stay one record.
+ if(action==='contacts'&&method==='POST'){const b=await body(req);requireThat(typeof b.send_id==='string'&&/^[0-9a-f-]{36}$/.test(b.send_id),'invalid_fields');requireThat(['whatsapp','email','copy'].includes(b.channel),'invalid_fields');
+  await db.batch([stmt(db,`INSERT OR IGNORE INTO contacts(send_id,case_id,channel,actor_id) SELECT ?,?,?,? WHERE ${mine}`,b.send_id,id,b.channel,me.staff_id,...mineArgs),
+   stmt(db,"INSERT OR IGNORE INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT 'contact-'||send_id,case_id,'contact',channel,'staff',actor_id FROM contacts WHERE send_id=? AND case_id=?",b.send_id,id)]);
+  requireThat(await one(db,'SELECT 1 FROM contacts WHERE send_id=? AND case_id=?',b.send_id,id),'not_found',404);return {ok:true};}
+ // Approves every document waiting for review in one transaction. Events, update and count share one predicate.
+ if(action==='review-all'&&method==='POST'){await expirePending(db,id);
+  const n=(await one(db,`SELECT count(*) n FROM requirements r WHERE ${REVIEWABLE}`,id)).n;requireThat(n>0,'nothing_to_review',409);
+  const open=`${mine} AND EXISTS(SELECT 1 FROM cases WHERE case_id=? AND status NOT IN ('closed','archived'))`,openArgs=[...mineArgs,id];
+  const done=await db.batch([
+   stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT lower(hex(randomblob(16))),r.case_id,'approved',r.name,'staff',? FROM requirements r WHERE ${REVIEWABLE} AND ${open}`,me.staff_id,id,...openArgs),
+   stmt(db,`UPDATE requirements SET status='approved',correction_message='' WHERE requirement_id IN (SELECT r.requirement_id FROM requirements r WHERE ${REVIEWABLE}) AND ${open}`,id,...openArgs),
+   syncCase(db,id),
+   stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);
+  if(done[1].meta.changes===0){await ownCase(db,me,id);active(await one(db,'SELECT status FROM cases WHERE case_id=?',id));throw new HttpError(409,'conflict');}
+  return {...await caseView(db,id,true),approved_count:done[1].meta.changes};}
  if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),x=await settings(db),link=await portalLink(env,db,id),{missing,text}=reminderText(x,view,link);requireThat(missing.length,'nothing_missing',409);
   await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', '),actor).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
