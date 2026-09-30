@@ -1,6 +1,6 @@
 ﻿:root{font-size:16px}
 button,input,select,textarea{font:inherit}
-input,select,textarea{border:1px solid #cad6df;border-radius:8px;background:white;color:var(--navy);padding:10px;min-width:0;width:100%}
+input,select,textarea{border:1px solid #cdb5a6;border-radius:8px;background:#fff;color:var(--brown);padding:10px;min-width:0;width:100%}
 textarea{min-height:110px;resize:vertical}
 label{display:grid;gap:7px;font-size:14px;color:var(--muted)}
 form{display:grid;gap:18px}
@@ -15,16 +15,17 @@ form{display:grid;gap:18px}
 .filters label{font-size:14px}
 .table-wrap{overflow:auto}
 table{border-collapse:collapse;width:100%;font-size:14px;text-align:right}
-th{background:#f6f8fa;color:var(--muted);font-weight:500;white-space:nowrap}
+th{background:#fff0e8;color:#593a2e;font-weight:700;white-space:nowrap}
 td,th{padding:17px 18px;border-bottom:1px solid var(--line)}
 td small{margin-top:5px;max-width:240px;font-size:13px}
 td strong{display:block}
 .case-name{border:0;padding:0;background:none;color:var(--navy);text-align:right}
 .case-name:hover{background:none;color:var(--teal)}
 .badge{font-size:14px}
-progress{width:100%;height:8px;border:0;border-radius:9px;accent-color:var(--teal)}
-progress::-webkit-progress-bar{background:#e3ebef;border-radius:9px}
-progress::-webkit-progress-value{background:var(--teal);border-radius:9px}
+progress{width:100%;height:8px;border:0;border-radius:9px;accent-color:var(--accent)}
+progress::-webkit-progress-bar{background:#f1ddd7;border-radius:9px}
+progress::-webkit-progress-value{background:linear-gradient(90deg,#f7c9bf,var(--peach),var(--accent),var(--signal));border-radius:9px}
+progress::-moz-progress-bar{background:linear-gradient(90deg,#f7c9bf,var(--peach),var(--accent),var(--signal));border-radius:9px}
 .empty{padding:50px;text-align:center;color:var(--muted)}
 .dialog-head{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:20px}
 .dialog-head h2{margin:0}
@@ -51,8 +52,8 @@ dialog{max-width:850px;max-height:90vh;overflow:auto}
 .welcome progress{margin-top:5px}
 .upload-zone input{border:0;padding:0;background:none;max-width:100%}
 .upload-zone label{width:100%}
-.client-page{max-width:860px;padding-top:30px}
-.sticky-finish{position:sticky;bottom:15px;background:#fff;padding:20px;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 35px #173b4312;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.client-page{max-width:860px;padding-top:135px}
+.sticky-finish{position:sticky;bottom:15px;background:#fffaf0;padding:20px;border:2px solid var(--signal);border-radius:14px;display:flex;align-items:center;justify-content:space-between;gap:20px}
 .sticky-finish p{margin:0;font-size:14px;line-height:1.6}
 .catalog-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
 .catalog-item{padding:16px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px}
@@ -86,6 +87,7 @@ dialog{padding:20px}
 .login{margin:20px auto}
 .toolbar{align-items:stretch}
 .welcome h1{font-size:25px}
+.client-page{padding-top:125px}
 }
 
 
