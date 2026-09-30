@@ -63,7 +63,7 @@ dialog{max-width:850px;max-height:90vh;overflow:auto}
 .pending-note{background:#fff4df;padding:14px;border-radius:9px;font-size:14px;line-height:1.7}
 .mono{font-family:Heebo,Arial,sans-serif;direction:ltr;unicode-bidi:embed;font-size:12px}
 .success{background:#e5f5ed;padding:20px;border-radius:12px;line-height:1.8;color:#146047}
-.stats .stat strong{font-size:32px}
+.stats .stat strong{font-size:1.45rem}
 .link-box{direction:ltr;margin:16px 0 12px;padding:12px 14px;border:1px dashed var(--iris);border-radius:9px;background:var(--iris-soft);color:var(--iris-dark);font-family:Heebo,Arial,sans-serif;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
 .activity .event{border-bottom:1px solid var(--line)}
 .activity .event time{margin-right:auto}
@@ -71,9 +71,10 @@ dialog{max-width:850px;max-height:90vh;overflow:auto}
 a{color:var(--iris-dark)}
 
 .subtabs{display:flex;gap:6px;margin:-8px 0 24px;padding:5px;border:1px solid #ddd4cc;border-radius:12px;background:#fffaf6;overflow-x:auto}
-.subtabs button[data-sub]{flex:0 0 auto;padding:9px 16px;border-color:transparent;border-radius:8px;background:transparent;color:var(--iris-dark)}
-.subtabs button[data-sub]:hover{border-color:#d1d9de;background:var(--iris-soft)}
-.subtabs button[data-sub].active{border-color:#e8a9aa;background:var(--accent-soft);color:#5d2f34}
+.subtabs button[data-sub]{flex:0 0 auto;padding:8px 15px;border:1px solid #ccd5da;border-radius:10px;background:linear-gradient(180deg,#fff 0%,#fff 58%,#edf1f3 100%);color:var(--iris-dark);box-shadow:0 3px 0 #b8c3c9,0 7px 13px rgb(70 87 97 / 9%),inset 0 2px rgb(255 255 255 / 75%)}
+.subtabs button[data-sub]:hover{border-color:#b8c3c9;background:linear-gradient(180deg,#fff 0%,#fff 62%,#f3f6f7 100%)}
+.subtabs button[data-sub]:active{transform:translateY(3px);box-shadow:0 0 0 #b8c3c9,0 3px 7px rgb(70 87 97 / 8%),inset 0 2px rgb(255 255 255 / 75%)}
+.subtabs button[data-sub].active{transform:translateY(2px);border-color:#dce3e7;background:linear-gradient(180deg,#aeb9c0 0%,#93a1aa 58%,var(--iris) 100%);color:#24323a;box-shadow:0 1px 0 #52636e,0 5px 11px rgb(70 87 97 / 20%),inset 0 3px rgb(255 255 255 / 25%);text-shadow:0 1px 0 rgb(255 255 255 / 38%)}
 
 .still-needed{border-color:#d5dde1;border-right:6px solid var(--iris);background:#fff}
 .still-needed h2{margin-bottom:12px;font-size:20px;color:var(--brown)}

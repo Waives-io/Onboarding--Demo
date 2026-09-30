@@ -1,5 +1,5 @@
 import legacy from './intake.mjs';
-import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,toCSV,validPassword,hashPassword,checkPassword} from './domain.mjs';
+import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
 const SITE=ORIGIN+'/Onboarding--Demo/';
 const now=()=>new Date().toISOString();
@@ -98,8 +98,9 @@ async function caseView(db,id,isOffice=false) {
  return {...c,...meta,requirements,...(isOffice?{events:await all(db,'SELECT e.*,s.name actor_name FROM events e LEFT JOIN staff s ON s.staff_id=e.actor_id WHERE e.case_id=? ORDER BY e.created_at DESC LIMIT 100',id)}:{})};
 }
 function clientFields(b) {
- const r={name:clean(b.name,120,true),reference:clean(b.reference,64,true),business_number:clean(b.business_number||'',40),email:clean(b.email||'',254),phone:clean(b.phone||'',40),status:clean(b.status||'active',30),tags:clean(b.tags||'',200),notes:clean(b.notes||'',2000)};
- requireThat(!r.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));return r;
+ const r={name:clean(b.name,120,true),reference:clean(b.reference,64,true),business_number:clean(b.business_number||'',40),email:clean(b.email??'',254,true),phone:clean(b.phone??'',40,true),status:clean(b.status||'active',30),tags:clean(b.tags||'',200),notes:clean(b.notes||'',2000)};
+ // Email and phone are how the office sends the link and reminders, so a client cannot be saved without both.
+ requireThat(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email),'invalid_email');requireThat(validPhone(r.phone),'invalid_phone');return r;
 }
 function insertClient(db,id,b,createdBy) {const r=clientFields(b);return stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,status,tags,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',id,...Object.values(r),createdBy);}
 // owner is the staff member already checked by the caller. The old owner text keeps their name for exports.

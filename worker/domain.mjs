@@ -55,6 +55,11 @@ export function israeliMobile(phone) {
  const national = digits.replace(/^\+?972|^00972/, '0');
  return /^05\d{8}$/.test(national) ? '972' + national.slice(1) : null;
 }
+// A client must be reachable: an Israeli mobile (for WhatsApp) or an international number in +country format.
+export function validPhone(phone) {
+ const digits = String(phone ?? '').replace(/[\s\-().]/g, '');
+ return israeliMobile(digits) !== null || /^\+[1-9]\d{7,14}$/.test(digits);
+}
 // Before the client finishes, progress counts required documents sent. After that it counts documents the office approved.
 export function caseProgress(status, requirements) {
  if (['collecting','action_required'].includes(status)) {
