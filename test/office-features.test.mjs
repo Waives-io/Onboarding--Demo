@@ -163,3 +163,17 @@ test('a client needs a valid email and a reachable phone', async () => {
     assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, reference: 'OK' + i, phone } })).status, 200, phone);
   assert.equal((await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'Test Client', reference: 'R1', email: 'a@b.co', phone: '' } })).body.error, 'invalid_fields');
 });
+
+test('a case loaded without a link gets one the first time the office asks', async () => {
+  const db = await seed(), e = env(db);
+  db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,token_hash,link_version) VALUES ('seeded','cl1','Seeded','custom','p','2026-12-01','unissued-seeded',0)").run();
+  db.raw.prepare("INSERT INTO requirements(requirement_id,case_id,name,required,max_files,position) VALUES ('s1','seeded','Bank',1,1,0)").run();
+  const first = (await call(e, '/api/cases/seeded/link')).body.link;
+  assert.equal((await call(e, '/api/cases/seeded/link')).body.link, first);
+  const token = first.split('#')[1];
+  const portal = await call(e, '/api/portal', { auth: 'none', caseToken: token });
+  assert.equal(portal.status, 200);
+  assert.equal(portal.body.name, 'Seeded');
+  // The placeholder never opens anything.
+  assert.equal((await call(e, '/api/portal', { auth: 'none', caseToken: 'unissued-seeded' })).status, 401);
+});
