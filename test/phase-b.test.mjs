@@ -64,22 +64,24 @@ test('a contact for a case handed to someone else mid-request is refused', async
   assert.equal(db.raw.prepare('SELECT count(*) n FROM events').get().n, 0);
 });
 
+const ALL = { requirement_ids: ['a', 'b', 'c', 'd'] };
 test('approve all approves only stored documents with nothing still saving', async () => {
   const db = await office(), e = env(db);
-  const r = await call(e, '/api/cases/case1/review-all', { method: 'POST', data: {} });
+  const r = await call(e, '/api/cases/case1/review-all', { method: 'POST', data: ALL });
   assert.equal(r.status, 200);
   assert.equal(r.body.approved_count, 2);
   const st = Object.fromEntries(db.raw.prepare('SELECT requirement_id,status FROM requirements').all().map(x => [x.requirement_id, x.status]));
   assert.deepEqual(st, { a: 'approved', b: 'approved', c: 'uploaded', d: 'missing' });
   const ev = db.raw.prepare("SELECT detail,actor_id FROM events WHERE action='approved' ORDER BY detail").all();
   assert.deepEqual(ev.map(x => [x.detail, x.actor_id]), [['A', 'm1'], ['B', 'm1']]);
+  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', data: ALL })).body.error, 'nothing_to_review');
   assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', data: {} })).body.error, 'nothing_to_review');
 });
 
 test('approve all finishes the case when nothing else is left', async () => {
   const db = await office(), e = env(db);
   db.raw.prepare("UPDATE uploads SET state='stored' WHERE submission_id='sc'").run();
-  const r = await call(e, '/api/cases/case1/review-all', { method: 'POST', data: {} });
+  const r = await call(e, '/api/cases/case1/review-all', { method: 'POST', data: ALL });
   assert.equal(r.body.approved_count, 3);
   assert.equal(r.body.status, 'ready_for_work');
   assert.ok(db.raw.prepare("SELECT completed_at FROM cases WHERE case_id='case1'").get().completed_at);
@@ -87,27 +89,45 @@ test('approve all finishes the case when nothing else is left', async () => {
 
 test('approve all is refused to other managers, on closed cases, and when the case moves mid-request', async () => {
   const db = await office(), e = env(db);
-  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', token: T.m2, data: {} })).status, 404);
+  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', token: T.m2, data: ALL })).status, 404);
   db.onPrepare = sql => { if (sql.includes("UPDATE requirements SET status='approved'")) { db.onPrepare = null; db.raw.prepare("UPDATE cases SET status='closed' WHERE case_id='case1'").run(); } };
-  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', data: {} })).status, 409);
+  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', data: ALL })).status, 409);
   assert.equal(db.raw.prepare("SELECT count(*) n FROM requirements WHERE status='approved'").get().n, 0);
   assert.equal(db.raw.prepare("SELECT count(*) n FROM events WHERE action='approved'").get().n, 0);
   db.raw.prepare("UPDATE cases SET status='collecting' WHERE case_id='case1'").run();
   db.onPrepare = sql => { if (sql.includes("UPDATE requirements SET status='approved'")) { db.onPrepare = null; db.raw.prepare("UPDATE cases SET owner_id='m2' WHERE case_id='case1'").run(); } };
-  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', data: {} })).status, 404);
+  assert.equal((await call(e, '/api/cases/case1/review-all', { method: 'POST', data: ALL })).status, 404);
   assert.equal(db.raw.prepare("SELECT count(*) n FROM requirements WHERE status='approved'").get().n, 0);
 });
 
 test('a document whose receipt arrives during approve all is not approved unseen', async () => {
   const db = await office(), e = env(db);
-  // The pending upload of C becomes stored just before the batch. It was not counted, but it is now eligible.
+  // The office saw A and B. C's receipt lands just before the batch; C must wait for its own review.
   db.onPrepare = sql => { if (sql.includes("INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT lower")) { db.onPrepare = null; db.raw.prepare("UPDATE uploads SET state='stored' WHERE submission_id='sc'").run(); } };
-  const r = await call(e, '/api/cases/case1/review-all', { method: 'POST', data: {} });
+  const r = await call(e, '/api/cases/case1/review-all', { method: 'POST', data: { requirement_ids: ['a', 'b'] } });
   assert.equal(r.status, 200);
+  assert.equal(db.raw.prepare("SELECT status FROM requirements WHERE requirement_id='c'").get().status, 'uploaded');
   // Whatever was approved has exactly one event, so the audit trail matches.
   const approved = db.raw.prepare("SELECT count(*) n FROM requirements WHERE status='approved'").get().n;
   assert.equal(db.raw.prepare("SELECT count(*) n FROM events WHERE action='approved'").get().n, approved);
   assert.equal(r.body.approved_count, approved);
+});
+
+test('a send_id belongs to one case, and a case closed mid-request takes no contact', async () => {
+  const db = await office(), e = env(db), id = uuid();
+  db.raw.prepare("INSERT INTO cases(case_id,client_id,name,type,reporting_period,due_date,owner_id,token_hash) VALUES ('case2','cl1','c2','custom','p','2026-12-01','m1','h2')").run();
+  await call(e, '/api/cases/case1/contacts', { method: 'POST', data: { send_id: id, channel: 'copy' } });
+  assert.equal((await call(e, '/api/cases/case2/contacts', { method: 'POST', data: { send_id: id, channel: 'copy' } })).body.error, 'conflict');
+  db.onPrepare = sql => { if (sql.includes('INSERT OR IGNORE INTO contacts')) { db.onPrepare = null; db.raw.prepare("UPDATE cases SET status='closed' WHERE case_id='case2'").run(); } };
+  assert.equal((await call(e, '/api/cases/case2/contacts', { method: 'POST', data: { send_id: uuid(), channel: 'copy' } })).status, 409);
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM contacts WHERE case_id='case2'").get().n, 0);
+});
+
+test('the client portal works without touching the contacts table', async () => {
+  const db = await office(), e = env(db);
+  db.raw.exec('DROP TABLE contacts');
+  const res = await worker.fetch(new Request('https://worker.example/api/portal', { headers: { Origin: SITE, 'X-Case-Token': await caseToken('case1', KEY) } }), e);
+  assert.equal(res.status, 200);
 });
 
 test('the client view never shows contact records', async () => {
