@@ -43,6 +43,9 @@ const cases = [
   ['demo-cl-06', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 6, 'collecting', 'mum'],
   ['demo-cl-02', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-07-01', '2026-07-31'], -20, 'closed', 'aaa'],
   ['demo-cl-10', 'דוח שנתי', ANNUAL, ['2025-01-01', '2025-12-31'], 60, 'collecting', 'mm'],
+  // Added 2026-09-30: two more cases whose documents are all approved.
+  ['demo-cl-04', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 4, 'ready_for_work', 'aaa'],
+  ['demo-cl-08', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 9, 'ready_for_work', 'aaa'],
 ];
 
 const period = ([a, b]) => a.slice(5, 7) === '01' && b.slice(5, 7) === '12' ? a.slice(0, 4) : `${a.slice(5, 7)}/${a.slice(0, 4)}`;

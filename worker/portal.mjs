@@ -105,12 +105,18 @@ async function caseView(db,id,isOffice=false) {
  if(!isOffice){for(const k of ['email','phone','business_number','drive_folder_id','client_id','reference','link_version','owner','owner_id','owner_name'])delete c[k];}
  return {...c,...meta,requirements,...(isOffice?{events:await all(db,'SELECT e.*,s.name actor_name FROM events e LEFT JOIN staff s ON s.staff_id=e.actor_id WHERE e.case_id=? ORDER BY e.created_at DESC LIMIT 100',id)}:{})};
 }
+// The office identifies a client by name and company number. The client number is internal (Drive folders, exports),
+// so the office never types it: a new client gets the next C-number.
 function clientFields(b) {
- const r={name:clean(b.name,120,true),reference:clean(b.reference,64,true),business_number:clean(b.business_number||'',40),email:clean(b.email??'',254,true),phone:clean(b.phone??'',40,true),status:clean(b.status||'active',30),tags:clean(b.tags||'',200),notes:clean(b.notes||'',2000)};
+ const r={name:clean(b.name,120,true),business_number:clean(b.business_number||'',40),email:clean(b.email??'',254,true),phone:clean(b.phone??'',40,true),notes:clean(b.notes||'',2000)};
  // Email and phone are how the office sends the link and reminders, so a client cannot be saved without both.
  requireThat(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email),'invalid_email');requireThat(validPhone(r.phone),'invalid_phone');return r;
 }
-function insertClient(db,id,b,createdBy) {const r=clientFields(b);return stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,status,tags,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',id,...Object.values(r),createdBy);}
+async function insertClient(db,id,b,createdBy) {const r=clientFields(b);
+ // Two offices adding a client at once can pick the same number; the UNIQUE index refuses one, which then takes the next.
+ for(let i=0;i<5;i++){const n=(await one(db,"SELECT max(CAST(substr(reference,3) AS INTEGER)) n FROM clients WHERE reference GLOB 'C-[0-9]*'"))?.n,ref='C-'+(Math.max(Number(n)||1000,1000)+1);
+  try{await stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,notes,created_by) VALUES (?,?,?,?,?,?,?,?)',id,r.name,ref,r.business_number,r.email,r.phone,r.notes,createdBy).run();return ref;}catch(e){if(!/UNIQUE/i.test(String(e?.message)))throw e;}}
+ throw new HttpError(409,'conflict');}
 // owner is the staff member already checked by the caller. The old owner text keeps their name for exports.
 async function caseStatements(db,b,env,me,owner) {
  const id=uid();
@@ -275,8 +281,7 @@ async function handle(req,env) {
  if(clientMatch&&method==='POST'){const id=clientMatch[1],b=await body(req),r=clientFields(b);requireThat(await visibleClient(db,me,id),'not_found',404);
   // A client that also has someone else's case is edited by an admin.
   if(!isAdmin(me))requireThat(!await one(db,'SELECT 1 FROM cases WHERE client_id=? AND (owner_id IS NULL OR owner_id!=?)',id,me.staff_id),'forbidden',403);
-  requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=? AND client_id!=?',r.reference,id),'duplicate_reference',409);
-  await stmt(db,"UPDATE clients SET name=?,reference=?,business_number=?,email=?,phone=?,status=?,tags=?,notes=?,updated_at=? WHERE client_id=?",...Object.values(r),now(),id).run();return {client_id:id};}
+  await stmt(db,"UPDATE clients SET name=?,business_number=?,email=?,phone=?,notes=?,updated_at=? WHERE client_id=?",r.name,r.business_number,r.email,r.phone,r.notes,now(),id).run();return {client_id:id};}
  if(path==='/api/settings'&&method==='GET')return settings(db);
  if(path==='/api/settings'&&method==='POST'){adminOnly(me);const b=await body(req),w=Number(b.warning_days),u=Number(b.urgent_days),t=clean(b.whatsapp_template||'',1000);
   requireThat(Number.isInteger(w)&&Number.isInteger(u)&&u>=0&&u<w&&w<=60,'invalid_deadline_days');
@@ -293,8 +298,8 @@ async function handle(req,env) {
   // Store a re-encoded copy of the verified bytes, never the caller's string.
   let bin='';for(const x of bytes)bin+=String.fromCharCode(x);
   await db.batch([stmt(db,'INSERT INTO logo(id,mime,data) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data',mime,btoa(bin)),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
- if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();requireThat(!await one(db,'SELECT client_id FROM clients WHERE reference=?',b.reference),'duplicate_reference',409);await insertClient(db,id,b,me.staff_id).run();return {client_id:id};}
- if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.email,cl.phone,st.name owner_name,${contactSql('c')},(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
+ if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();return {client_id:id,reference:await insertClient(db,id,b,me.staff_id)};}
+ if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.business_number,cl.email,cl.phone,st.name owner_name,${contactSql('c')},(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
   return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});}
  if(path==='/api/cases'&&method==='POST'){const b=await body(req);
   // A manager always opens cases for themselves. An admin can hand a case to any active staff member.

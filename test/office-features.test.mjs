@@ -70,14 +70,23 @@ test('reminder uses the office template and the client mobile number', async () 
   assert.match(r.body.text, /משרד כהן$/);
 });
 
-test('a client can be edited and the reference stays unique', async () => {
-  const e = env(await seed());
-  const ok = await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'Renamed', reference: 'R1', phone: '0521112233', email: 'a@b.co' } });
+test('a client can be edited, and the internal client number never changes', async () => {
+  const db = await seed(), e = env(db);
+  const ok = await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'Renamed', reference: 'R2', phone: '0521112233', email: 'a@b.co' } });
   assert.equal(ok.status, 200);
-  assert.equal((await call(e, '/api/clients')).body.find(c => c.client_id === 'cl1').name, 'Renamed');
-  const dup = await call(e, '/api/clients/cl1', { method: 'POST', data: { name: 'X', reference: 'R2', phone: '0521112233', email: 'a@b.co' } });
-  assert.equal(dup.body.error, 'duplicate_reference');
-  assert.equal((await call(e, '/api/clients/nope', { method: 'POST', data: { name: 'X', reference: 'R9', phone: '0521112233', email: 'a@b.co' } })).status, 404);
+  const c = (await call(e, '/api/clients')).body.find(c => c.client_id === 'cl1');
+  assert.deepEqual([c.name, c.reference], ['Renamed', 'R1']);
+  assert.equal((await call(e, '/api/clients/nope', { method: 'POST', data: { name: 'X', phone: '0521112233', email: 'a@b.co' } })).status, 404);
+});
+
+test('a new client gets the next client number by itself', async () => {
+  const db = await seed(), e = env(db), data = { name: 'N', phone: '0521112233', email: 'a@b.co' };
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data })).body.reference, 'C-1001');
+  db.raw.prepare("INSERT INTO clients(client_id,name,reference) VALUES ('x','X','C-1050')").run();
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...data, reference: 'C-1001' } })).body.reference, 'C-1051');
+  // Someone else takes the number between the read and the insert: the next one is used.
+  db.onPrepare = sql => { if (sql.startsWith('INSERT INTO clients')) { db.onPrepare = null; db.raw.prepare("INSERT INTO clients(client_id,name,reference) VALUES ('y','Y','C-1052')").run(); } };
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data })).body.reference, 'C-1053');
 });
 
 test('revoking a link locks out the old one and the new one works', async () => {
