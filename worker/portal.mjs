@@ -44,7 +44,11 @@ const DEFAULT_REMINDER='שלום {client},\nלהשלמת {case} ({period}) נד�
 const PLACEHOLDERS=['client','case','period','due','missing','link','office'];
 async function settings(db) {return await one(db,'SELECT * FROM settings WHERE id=1')||{office_name:'',warning_days:7,urgent_days:2,whatsapp_template:'',logo_version:0};}
 // Read the version at use time so a concurrent revoke can never hand out the old link.
-const portalLink=async(env,db,id)=>{const {link_version}=await one(db,'SELECT link_version FROM cases WHERE case_id=?',id);return SITE+'client.html#'+await caseLinkToken(id,link_version,env.PORTAL_LINK_KEY);};
+// A case loaded straight into the database (demo data, imports) has link_version 0 and no usable token yet.
+// The first time the office asks for its link, version 1 is issued. The guard makes two first requests agree.
+const portalLink=async(env,db,id)=>{const version=async()=>(await one(db,'SELECT link_version FROM cases WHERE case_id=?',id)).link_version;
+ if(await version()===0)await stmt(db,'UPDATE cases SET link_version=1,token_hash=? WHERE case_id=? AND link_version=0',await hash(await caseLinkToken(id,1,env.PORTAL_LINK_KEY)),id).run();
+ return SITE+'client.html#'+await caseLinkToken(id,await version(),env.PORTAL_LINK_KEY);};
 const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
 function reminderText(s,view,link) {
  const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction'));
