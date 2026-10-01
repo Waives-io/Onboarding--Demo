@@ -40,8 +40,8 @@ function syncCase(db,id) {
  WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
-const DEFAULT_REMINDER='שלום {client},\nלהשלמת {case} ({period}) נדרשים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
-const PLACEHOLDERS=['client','case','period','due','missing','link','office'];
+const DEFAULT_REMINDER='שלום {client},\nלבקשת המסמכים {request} ({period}) חסרים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
+const PLACEHOLDERS=['client','request','case','period','due','missing','link','office'];
 async function settings(db) {return await one(db,'SELECT * FROM settings WHERE id=1')||{office_name:'',warning_days:7,urgent_days:2,whatsapp_template:'',logo_version:0};}
 // Read the version at use time so a concurrent revoke can never hand out the old link.
 // A case loaded straight into the database (demo data, imports) has link_version 0 and no usable token yet.
@@ -52,7 +52,7 @@ const portalLink=async(env,db,id)=>{const version=async()=>(await one(db,'SELECT
 const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
 function reminderText(s,view,link) {
  const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction'));
- const values={client:view.client_name,case:view.name,period:view.reporting_period,due:ddmmyyyy(view.due_date),office:s.office_name,link,
+ const values={client:view.contact_name||view.client_name,request:view.name,case:view.name,period:view.reporting_period,due:ddmmyyyy(view.due_date),office:s.office_name,link,
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
  return {missing,text:(s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m)};
 }
@@ -93,10 +93,10 @@ async function verify(password,stored){if(stored)return checkPassword(password,s
 async function portal(req,db) {
  const token=req.headers.get('X-Case-Token')||'';
  requireThat(/^[a-f0-9]{64}$/.test(token),'unauthorized',401);
- const c=await one(db,'SELECT cases.*,clients.name AS client_name,clients.reference AS client_reference,clients.email AS client_email FROM cases JOIN clients USING(client_id) WHERE token_hash=?',await hash(token)); requireThat(c,'unauthorized',401); return c;
+ const c=await one(db,'SELECT cases.*,clients.name AS client_name,clients.contact_name,clients.reference AS client_reference,clients.email AS client_email FROM cases JOIN clients USING(client_id) WHERE token_hash=?',await hash(token)); requireThat(c,'unauthorized',401); return c;
 }
 async function caseView(db,id,isOffice=false) {
- const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name${isOffice?','+contactSql('cases'):''} FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
+ const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.contact_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name${isOffice?','+contactSql('cases'):''} FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
  requireThat(c,'not_found',404); delete c.token_hash;
  const requirements=await all(db,'SELECT * FROM requirements WHERE case_id=? ORDER BY position',id);
  for(const r of requirements){r.uploads=await all(db,`SELECT submission_id,filename,mime_type,size,version,state,created_at,stored_at${isOffice?',drive_file_id,drive_folder_id,client_note':''} FROM uploads WHERE requirement_id=? ORDER BY version DESC`,r.requirement_id);if(!isOffice)delete r.drive_folder_id;}
@@ -108,14 +108,16 @@ async function caseView(db,id,isOffice=false) {
 // The office identifies a client by name and company number. The client number is internal (Drive folders, exports),
 // so the office never types it: a new client gets the next C-number.
 function clientFields(b) {
- const r={name:clean(b.name,120,true),business_number:clean(b.business_number||'',40),email:clean(b.email??'',254,true),phone:clean(b.phone??'',40,true),notes:clean(b.notes||'',2000)};
+ const r={name:clean(b.name,120,true),contact_name:clean(b.contact_name||'',120),business_number:clean(b.business_number||'',40),email:clean(b.email??'',254,true),phone:clean(b.phone??'',40,true),notes:clean(b.notes||'',2000),regular_template_id:clean(b.regular_template_id||'',64)||null};
  // Email and phone are how the office sends the link and reminders, so a client cannot be saved without both.
  requireThat(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email),'invalid_email');requireThat(validPhone(r.phone),'invalid_phone');return r;
 }
-async function insertClient(db,id,b,createdBy) {const r=clientFields(b);
+// The regular document list must exist. Any staff member may set it; only admins edit the lists themselves.
+async function checkTemplate(db,r){if(r.regular_template_id)requireThat(await one(db,'SELECT 1 FROM templates WHERE template_id=?',r.regular_template_id),'template_not_found',404);}
+async function insertClient(db,id,b,createdBy) {const r=clientFields(b);await checkTemplate(db,r);
  // Two offices adding a client at once can pick the same number; the UNIQUE index refuses one, which then takes the next.
  for(let i=0;i<5;i++){const n=(await one(db,"SELECT max(CAST(substr(reference,3) AS INTEGER)) n FROM clients WHERE reference GLOB 'C-[0-9]*'"))?.n,ref='C-'+(Math.max(Number(n)||1000,1000)+1);
-  try{await stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,notes,created_by) VALUES (?,?,?,?,?,?,?,?)',id,r.name,ref,r.business_number,r.email,r.phone,r.notes,createdBy).run();return ref;}catch(e){if(!/UNIQUE/i.test(String(e?.message)))throw e;}}
+  try{await stmt(db,'INSERT INTO clients(client_id,name,reference,business_number,email,phone,notes,created_by,contact_name,regular_template_id) VALUES (?,?,?,?,?,?,?,?,?,?)',id,r.name,ref,r.business_number,r.email,r.phone,r.notes,createdBy,r.contact_name,r.regular_template_id).run();return ref;}catch(e){if(!/UNIQUE/i.test(String(e?.message)))throw e;}}
  throw new HttpError(409,'conflict');}
 // owner is the staff member already checked by the caller. The old owner text keeps their name for exports.
 async function caseStatements(db,b,env,me,owner) {
@@ -283,7 +285,8 @@ async function handle(req,env) {
  if(clientMatch&&method==='POST'){const id=clientMatch[1],b=await body(req),r=clientFields(b);requireThat(await visibleClient(db,me,id),'not_found',404);
   // A client that also has someone else's case is edited by an admin.
   if(!isAdmin(me))requireThat(!await one(db,'SELECT 1 FROM cases WHERE client_id=? AND (owner_id IS NULL OR owner_id!=?)',id,me.staff_id),'forbidden',403);
-  await stmt(db,"UPDATE clients SET name=?,business_number=?,email=?,phone=?,notes=?,updated_at=? WHERE client_id=?",r.name,r.business_number,r.email,r.phone,r.notes,now(),id).run();return {client_id:id};}
+  await checkTemplate(db,r);
+  await stmt(db,"UPDATE clients SET name=?,contact_name=?,business_number=?,email=?,phone=?,notes=?,regular_template_id=?,updated_at=? WHERE client_id=?",r.name,r.contact_name,r.business_number,r.email,r.phone,r.notes,r.regular_template_id,now(),id).run();return {client_id:id};}
  if(path==='/api/settings'&&method==='GET')return settings(db);
  if(path==='/api/settings'&&method==='POST'){adminOnly(me);const b=await body(req),w=Number(b.warning_days),u=Number(b.urgent_days),t=clean(b.whatsapp_template||'',1000);
   requireThat(Number.isInteger(w)&&Number.isInteger(u)&&u>=0&&u<w&&w<=60,'invalid_deadline_days');
@@ -358,7 +361,7 @@ async function handle(req,env) {
   await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', '),actor).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
- if(path==='/api/csv/export'&&method==='POST'){adminOnly(me);const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','reference','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','period_start','period_end','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
+ if(path==='/api/csv/export'&&method==='POST'){adminOnly(me);const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','contact_name','reference','regular_template_id','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','period_start','period_end','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
  throw new HttpError(404,'not_found');
 }
 export default {async fetch(req,env){const path=new URL(req.url).pathname;

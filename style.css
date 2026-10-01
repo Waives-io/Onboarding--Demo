@@ -36,3 +36,4 @@ main,body:has(header nav) main{max-width:none;margin:0 var(--sidebar) 0 0;paddin
 .filters label.due-filter{font-size:.82rem;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding-inline-start:12px;color:var(--gray)}
 .filters label.due-filter input{border:0;padding-inline-start:0;min-width:0;flex:1;background:transparent}
 .filters label.due-filter span{white-space:nowrap;font-weight:700}
+.back-links{display:flex;gap:14px;flex-wrap:wrap}

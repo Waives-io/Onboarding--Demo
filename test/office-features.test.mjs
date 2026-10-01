@@ -186,3 +186,29 @@ test('a case loaded without a link gets one the first time the office asks', asy
   // The placeholder never opens anything.
   assert.equal((await call(e, '/api/portal', { auth: 'none', caseToken: 'unissued-seeded' })).status, 401);
 });
+
+test('a client file keeps a contact person and its regular document list', async () => {
+  const db = await seed(), e = env(db);
+  db.raw.prepare("INSERT INTO templates VALUES ('t-monthly','חודשי') ON CONFLICT DO NOTHING").run();
+  const base = { name: 'נגריית הזית', phone: '0521112233', email: 'a@b.co', contact_name: 'דנה', regular_template_id: 't-monthly' };
+  const r = await call(e, '/api/clients', { method: 'POST', data: base });
+  assert.equal(r.status, 200);
+  const c = (await call(e, '/api/clients')).body.find(x => x.client_id === r.body.client_id);
+  assert.deepEqual([c.contact_name, c.regular_template_id], ['דנה', 't-monthly']);
+  assert.equal((await call(e, '/api/clients', { method: 'POST', data: { ...base, regular_template_id: 'nope' } })).body.error, 'template_not_found');
+  assert.equal((await call(e, '/api/clients/' + r.body.client_id, { method: 'POST', data: { ...base, regular_template_id: '' } })).status, 200);
+  assert.equal(db.raw.prepare('SELECT regular_template_id FROM clients WHERE client_id=?').get(r.body.client_id).regular_template_id, null);
+  const csv = (await call(e, '/api/csv/export', { method: 'POST', data: { entity: 'clients' } })).body.csv;
+  assert.ok(csv.split('\r\n')[0].includes('"contact_name"') && csv.includes('"דנה"'));
+});
+
+test('reminders greet the contact person and call the period a request', async () => {
+  const db = await seed(), e = env(db);
+  db.raw.prepare("UPDATE clients SET contact_name='דנה' WHERE client_id='cl1'").run();
+  const r = await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} });
+  assert.ok(r.body.text.startsWith('שלום דנה,'));
+  assert.ok(r.body.text.includes('לבקשת המסמכים Monthly'));
+  // A template saved with the old {case} placeholder still works.
+  await call(e, '/api/settings', { method: 'POST', data: { office_name: 'x', warning_days: 7, urgent_days: 2, whatsapp_template: '{client}: {case} / {request}' } });
+  assert.equal((await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text, 'דנה: Monthly / Monthly');
+});
