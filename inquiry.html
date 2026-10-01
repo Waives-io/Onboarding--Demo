@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="he" dir="rtl" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="google" content="notranslate">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://127.0.0.1:8787 https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev; img-src 'self' data: http://127.0.0.1:8787 https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev; object-src 'none'; base-uri 'self'">
+  <title>התיק מוכן · פנייה למשרד</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="portal.css">
+</head>
+<body>
+  <div class="demo-bar">סביבת הדגמה · פרטים פיקטיביים בלבד</div>
+  <header class="client-header"><div class="brand"><span class="brand-mark">✓</span><span><strong>התיק מוכן<span class="brand-dot">.</span></strong><small id="office-name">פנייה למשרד</small></span></div></header>
+  <main id="app" class="client-page">
+    <section class="welcome">
+      <span class="eyebrow">פנייה למשרד</span>
+      <h1>נשאיר לך רק להעלות מסמכים</h1>
+      <p>ממלאים כמה פרטים ובוחרים במה צריך עזרה. המשרד ישלח לך קישור אישי עם רשימת המסמכים המדויקת.</p>
+    </section>
+    <section class="panel card">
+      <form id="inquiry" novalidate>
+        <div class="form-grid">
+          <label>שם מלא *<input name="contact_name" autocomplete="name" required maxlength="120" placeholder="לדוגמה: דנה כהן"><span class="field-error" id="err-contact_name" aria-live="polite"></span></label>
+          <label>נייד *<input name="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" required placeholder="050-0000000"><small class="muted">כאן יגיע הקישור. 4 הספרות האחרונות ישמשו לכניסה.</small><span class="field-error" id="err-phone" aria-live="polite"></span></label>
+          <label>שם העסק<input name="business" autocomplete="organization" maxlength="120" placeholder="לא חובה"><span class="field-error" id="err-business" aria-live="polite"></span></label>
+          <label>ח״פ / ע״מ / ת״ז<input name="business_number" inputmode="numeric" dir="ltr" maxlength="40" placeholder="לא חובה"><span class="field-error" id="err-business_number" aria-live="polite"></span></label>
+          <label class="wide">דוא״ל *<input name="email" type="email" inputmode="email" autocomplete="email" dir="ltr" required placeholder="name@example.co.il"><span class="field-error" id="err-email" aria-live="polite"></span></label>
+        </div>
+        <fieldset class="need-options" id="need-group">
+          <legend>במה צריך עזרה? *</legend>
+          <label><input type="radio" name="need" value="refund"> החזר מס</label>
+          <label><input type="radio" name="need" value="annual_individual"> דוח שנתי – שכיר או יחיד</label>
+          <label><input type="radio" name="need" value="annual_selfemployed"> דוח שנתי – עצמאי</label>
+          <label><input type="radio" name="need" value="annual_company"> דוח שנתי – חברה</label>
+          <label><input type="radio" name="need" value="open_business"> פתיחת עסק</label>
+          <label><input type="radio" name="need" value="capital"> הצהרת הון</label>
+          <label><input type="radio" name="need" value="other"> משהו אחר</label>
+        </fieldset>
+        <span class="field-error" id="err-need" aria-live="polite"></span>
+        <label class="wide">רוצה להוסיף משהו?<textarea name="note" rows="3" maxlength="500" placeholder="לא חובה. לדוגמה: עברתי עבודה באמצע השנה"></textarea></label>
+        <label class="hp" aria-hidden="true">אתר<input name="website" tabindex="-1" autocomplete="off"></label>
+        <label class="consent"><input type="checkbox" name="consent"> <span>אני מאשר/ת שהמשרד יפנה אליי ב־WhatsApp ובדוא״ל בנוגע לפנייה הזו. *</span></label>
+        <span class="field-error" id="err-consent" aria-live="polite"></span>
+        <p id="form-error" class="error" role="alert"></p>
+        <button class="primary" id="submit">שליחת הפרטים למשרד</button>
+      </form>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="portal-config.js"></script>
+  <script type="module" src="inquiry.mjs"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import legacy from './intake.mjs';
-import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone} from './domain.mjs';
+import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone,phonePin,formatMobile} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
 const SITE=ORIGIN+'/Onboarding--Demo/';
 const now=()=>new Date().toISOString();
@@ -37,10 +37,15 @@ function syncCase(db,id) {
  WHEN status IN ('closed','archived') THEN status
  WHEN EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND status='correction') THEN 'action_required'
  WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND status!='approved' AND (required=1 OR status!='missing')) THEN 'ready_for_work'
- WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved')) THEN 'client_completed'
+ WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved') AND unavailable_note IS NULL) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
-const DEFAULT_REMINDER='שלום {client},\nלבקשת המסמכים {request} ({period}) חסרים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
+const DEFAULT_REMINDER='שלום {client},\nלתיק {case} ({period}) חסרים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
+// What a visitor can choose on the landing page, in their words, and the case type it suggests to the office.
+const NEEDS={refund:{label:'החזר מס',template:'ct-refund'},annual_individual:{label:'דוח שנתי – שכיר או יחיד',template:'ct-annual-individual'},annual_selfemployed:{label:'דוח שנתי – עצמאי',template:'ct-annual-selfemployed'},annual_company:{label:'דוח שנתי – חברה',template:'ct-annual-company'},open_business:{label:'פתיחת עסק',template:'ct-open-business'},capital:{label:'הצהרת הון',template:'ct-capital-declaration'},other:{label:'משהו אחר',template:null}};
+// The link asks for the last 4 digits of the client's mobile. Every message says so, also a custom one.
+const PIN_HINT='לכניסה: 4 הספרות האחרונות של הנייד שלך.';
+const withPinHint=(text,phone)=>phonePin(phone)&&!text.includes('4 הספרות')?text+'\n'+PIN_HINT:text;
 const PLACEHOLDERS=['client','request','case','period','due','missing','link','office'];
 async function settings(db) {return await one(db,'SELECT * FROM settings WHERE id=1')||{office_name:'',warning_days:7,urgent_days:2,whatsapp_template:'',logo_version:0};}
 // Read the version at use time so a concurrent revoke can never hand out the old link.
@@ -51,10 +56,10 @@ const portalLink=async(env,db,id)=>{const version=async()=>(await one(db,'SELECT
  return SITE+'client.html#'+await caseLinkToken(id,await version(),env.PORTAL_LINK_KEY);};
 const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
 function reminderText(s,view,link) {
- const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction'));
+ const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction')&&!(r.status==='missing'&&r.unavailable_note!=null));
  const values={client:view.contact_name||view.client_name,request:view.name,case:view.name,period:view.reporting_period,due:ddmmyyyy(view.due_date),office:s.office_name,link,
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
- return {missing,text:(s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m)};
+ return {missing,text:withPinHint((s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m),view.phone)};
 }
 // The office's last contact with the client about a case: when, how, and how many times.
 const contactSql=t=>`(SELECT count(*) FROM contacts WHERE case_id=${t}.case_id) contact_count,(SELECT max(created_at) FROM contacts WHERE case_id=${t}.case_id) last_contact_at,(SELECT channel FROM contacts WHERE case_id=${t}.case_id ORDER BY created_at DESC LIMIT 1) last_channel`;
@@ -90,10 +95,19 @@ const emailOf=v=>{const e=clean(v,254,true).toLowerCase();requireThat(/^[^\s@]+@
 // On a fresh isolate that one derivation is the one that creates the dummy record.
 let dummy;
 async function verify(password,stored){if(stored)return checkPassword(password,stored);if(!dummy){dummy=await hashPassword(password);return false;}await checkPassword(password,dummy);return false;}
+// The link is the key to the case; the last 4 digits of the client's mobile are a second check, so a forwarded link alone
+// does not open the documents. Wrong digits are counted per case: 8 tries per 15 minutes, then even the right digits wait.
+const PIN_TRIES=8;
 async function portal(req,db) {
  const token=req.headers.get('X-Case-Token')||'';
  requireThat(/^[a-f0-9]{64}$/.test(token),'unauthorized',401);
- const c=await one(db,'SELECT cases.*,clients.name AS client_name,clients.contact_name,clients.reference AS client_reference,clients.email AS client_email FROM cases JOIN clients USING(client_id) WHERE token_hash=?',await hash(token)); requireThat(c,'unauthorized',401); return c;
+ const c=await one(db,'SELECT cases.*,clients.name AS client_name,clients.contact_name,clients.reference AS client_reference,clients.email AS client_email,clients.phone AS client_phone FROM cases JOIN clients USING(client_id) WHERE token_hash=?',await hash(token)); requireThat(c,'unauthorized',401);
+ const pin=phonePin(c.client_phone);delete c.client_phone;
+ if(pin){const key='pin:'+c.case_id,l=await one(db,'SELECT attempts,expires_at FROM login_limits WHERE bucket=?',await hash(key));
+  requireThat(!(l&&l.expires_at>Date.now()&&l.attempts>=PIN_TRIES),'too_many_attempts',429);
+  const given=String(req.headers.get('X-Case-Pin')||'').slice(0,8);
+  if(given!==pin){if(given)await limited(db,key,PIN_TRIES);throw new HttpError(401,given?'wrong_pin':'pin_required');}}
+ return c;
 }
 async function caseView(db,id,isOffice=false) {
  const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.contact_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name${isOffice?','+contactSql('cases'):''} FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
@@ -161,7 +175,7 @@ async function storeReceipt(db,u,receipt) {
  // A late receipt for a failed upload records the file but leaves requirement and case status alone.
  const pending="EXISTS(SELECT 1 FROM uploads WHERE submission_id=? AND state='pending')",failed="EXISTS(SELECT 1 FROM uploads WHERE submission_id=? AND state='failed')";
  await db.batch([
- stmt(db,`UPDATE requirements SET status='uploaded',correction_message='' WHERE requirement_id=? AND ${pending}`,r.requirement_id,sid),
+ stmt(db,`UPDATE requirements SET status='uploaded',correction_message='',unavailable_note=NULL,unavailable_at=NULL WHERE requirement_id=? AND ${pending}`,r.requirement_id,sid),
  stmt(db,'UPDATE requirements SET drive_folder_id=coalesce(drive_folder_id,?) WHERE requirement_id=?',receipt.drive_folder_id,r.requirement_id),
  stmt(db,`UPDATE cases SET completed_at=NULL WHERE case_id=? AND ${pending}`,r.case_id,sid),
  stmt(db,'UPDATE cases SET drive_folder_id=coalesce(drive_folder_id,?) WHERE case_id=?',receipt.drive_folder_id,r.case_id),
@@ -208,12 +222,27 @@ async function handle(req,env) {
   return new Response(Uint8Array.from(atob(l.data),ch=>ch.charCodeAt(0)),{headers:{'Content-Type':l.mime,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff'}});}
  if(path.startsWith('/api/portal')) {
  const c=await portal(req,db);
- if(path==='/api/portal'&&method==='GET'){await expirePending(db,c.case_id);return caseView(db,c.case_id);}
+ if(path==='/api/portal'&&method==='GET'){if(['closed','archived'].includes(c.status))return {closed:true,status:c.status,name:c.name,client_name:c.client_name,contact_name:c.contact_name,requirements:[]};await expirePending(db,c.case_id);return caseView(db,c.case_id);}
  active(c);
  if(path==='/api/portal/complete'&&method==='POST') {
- const missing=await one(db,"SELECT count(*) AS n FROM requirements WHERE case_id=? AND (status='correction' OR (required=1 AND status NOT IN ('uploaded','approved')))",c.case_id);
+ const missing=await one(db,"SELECT count(*) AS n FROM requirements WHERE case_id=? AND (status='correction' OR (required=1 AND status NOT IN ('uploaded','approved') AND unavailable_note IS NULL))",c.case_id);
  requireThat(missing.n===0,'missing_requirements',409);
  await db.batch([stmt(db,'UPDATE cases SET client_completed_at=? WHERE case_id=?',now(),c.case_id),syncCase(db,c.case_id),event(db,c.case_id,'client_completed','',{type:'client',id:c.client_id})]);return caseView(db,c.case_id);
+ }
+ // The client says they do not have a document, with an optional reason. It counts as answered, and the office approves
+ // the absence or asks for the document anyway. Uploading a file later clears it. Only a missing document can be marked.
+ if(path==='/api/portal/unavailable'&&method==='POST') {
+ const b=await body(req),r=await one(db,'SELECT * FROM requirements WHERE requirement_id=? AND case_id=?',b.requirement_id,c.case_id);requireThat(r,'not_found',404);
+ requireThat(r.status==='missing','not_missing',409);
+ const undo=b.undo===true,note=undo?null:clean(b.note??'',500),who={type:'client',id:c.client_id};
+ await db.batch([
+  stmt(db,"UPDATE requirements SET unavailable_note=?,unavailable_at=? WHERE requirement_id=? AND status='missing'",note,undo?null:now(),r.requirement_id),
+  syncCase(db,c.case_id),
+  stmt(db,"UPDATE cases SET client_completed_at=NULL WHERE case_id=? AND status='collecting'",c.case_id),
+  stmt(db,"INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,case_id,'client_completed','','client',? FROM cases WHERE case_id=? AND status='client_completed' AND client_completed_at IS NULL",uid(),c.client_id,c.case_id),
+  stmt(db,"UPDATE cases SET client_completed_at=? WHERE case_id=? AND status='client_completed' AND client_completed_at IS NULL",now(),c.case_id),
+  event(db,c.case_id,undo?'client_unavailable_undone':'client_unavailable',r.name+(note?': '+note:''),who)]);
+ return caseView(db,c.case_id);
  }
  if(path==='/api/portal/uploads'&&method==='POST') {
  bridge(env);
@@ -249,6 +278,21 @@ async function handle(req,env) {
  }
  throw new HttpError(404,'not_found');
  }
+ // The public landing page. A visitor leaves their details and what they need; the office sees it as a new inquiry
+ // and opens a client and a case from it. Nothing is created for the client until the office decides.
+ if(path==='/api/inquiries'&&method==='POST') {
+ const b=await body(req);
+ // A filled hidden field means a bot. It gets the same answer as a person, and nothing is saved.
+ if(b.website)return {ok:true};
+ await limited(db,'inquiry:'+ip,5);
+ requireThat(b.consent===true,'consent_required');
+ const phone=formatMobile(clean(b.phone??'',40,true));requireThat(phone,'invalid_mobile');
+ const need=clean(b.need??'',40,true);requireThat(need in NEEDS,'invalid_fields');
+ const tpl=NEEDS[need].template&&await one(db,'SELECT template_id FROM templates WHERE template_id=?',NEEDS[need].template);
+ await stmt(db,'INSERT INTO inquiries(inquiry_id,name,contact_name,business_number,phone,email,need,template_id,note,source) VALUES (?,?,?,?,?,?,?,?,?,?)',
+  uid(),clean(b.name??'',120,true),clean(b.contact_name??'',120),clean(b.business_number??'',40),phone,emailOf(b.email),NEEDS[need].label,tpl?.template_id||null,clean(b.note??'',500),clean(b.source??'',60)).run();
+ return {ok:true};
+ }
  // Deny by default: every route below either checks adminOnly, or limits a manager to their own cases and clients.
  const me=await office(req,db),actor=staffActor(me);
  if(path==='/api/logout'&&method==='POST'){await stmt(db,'DELETE FROM sessions WHERE token_hash=?',me.token_hash).run();return {ok:true};}
@@ -280,6 +324,13 @@ async function handle(req,env) {
  if(path==='/api/owners/legacy'&&method==='GET'){adminOnly(me);return all(db,'SELECT owner,count(*) cases FROM cases WHERE owner_id IS NULL GROUP BY owner ORDER BY owner');}
  if(path==='/api/owners/map'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
   const r=await stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE owner_id IS NULL AND owner=?',s.staff_id,s.name,clean(b.owner??'',100)).run();return {mapped:r.meta.changes};}
+ // Inquiries belong to the whole office, so every staff member sees the new ones and can open a case from them.
+ if(path==='/api/inquiries'&&method==='GET')return all(db,"SELECT * FROM inquiries WHERE status='new' ORDER BY created_at DESC LIMIT 200");
+ const inquiryMatch=path.match(/^\/api\/inquiries\/([\w-]+)$/);
+ if(inquiryMatch&&method==='POST'){const b=await body(req);requireThat(['handled','dismissed'].includes(b.status));
+  if(b.client_id)requireThat(await visibleClient(db,me,b.client_id),'client_not_found',404);
+  const done=await stmt(db,"UPDATE inquiries SET status=?,client_id=?,handled_at=?,handled_by=? WHERE inquiry_id=? AND status='new'",b.status,b.client_id||null,now(),me.staff_id,inquiryMatch[1]).run();
+  requireThat(done.meta.changes===1,'not_found',404);return {ok:true};}
  if(path==='/api/clients'&&method==='GET')return isAdmin(me)?all(db,'SELECT * FROM clients ORDER BY name'):all(db,`SELECT cl.* FROM clients cl WHERE ${CLIENT_SCOPE} ORDER BY cl.name`,me.staff_id,me.staff_id);
  const clientMatch=path.match(/^\/api\/clients\/([\w-]+)$/);
  if(clientMatch&&method==='POST'){const id=clientMatch[1],b=await body(req),r=clientFields(b);requireThat(await visibleClient(db,me,id),'not_found',404);
@@ -304,7 +355,7 @@ async function handle(req,env) {
   let bin='';for(const x of bytes)bin+=String.fromCharCode(x);
   await db.batch([stmt(db,'INSERT INTO logo(id,mime,data) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data',mime,btoa(bin)),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
  if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();return {client_id:id,reference:await insertClient(db,id,b,me.staff_id)};}
- if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.business_number,cl.email,cl.phone,st.name owner_name,${contactSql('c')},(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND status IN ('missing','correction')) missing FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
+ if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.business_number,cl.email,cl.phone,st.name owner_name,${contactSql('c')},(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND (status='correction' OR status='missing' AND required=1 AND unavailable_note IS NULL)) missing,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status='missing' AND unavailable_note IS NOT NULL) unavailable FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status,r.unavailable_note FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
   return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});}
  if(path==='/api/cases'&&method==='POST'){const b=await body(req);
   // A manager always opens cases for themselves. An admin can hand a case to any active staff member.
@@ -337,7 +388,7 @@ async function handle(req,env) {
  if(action==='owner'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
   await db.batch([stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE case_id=?',s.staff_id,s.name,id),event(db,id,'owner_changed',s.name,actor)]);return caseView(db,id,true);}
  active(c);
- if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle=`NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending') AND ${mine}`,rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,?,?,'staff',? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),me.staff_id,rq,...mineArgs),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq,...mineArgs)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=? WHERE requirement_id=? AND ${idle}`,b.status,message,rq,rq,...mineArgs),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
+ if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(r.unavailable_note!=null&&r.status==='missing'||await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle=`NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending') AND ${mine}`,rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,?,?,'staff',? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),me.staff_id,rq,...mineArgs),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq,...mineArgs)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=?,unavailable_note=CASE WHEN ?='correction' THEN NULL ELSE unavailable_note END WHERE requirement_id=? AND ${idle}`,b.status,message,b.status,rq,rq,...mineArgs),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
  // The office opened WhatsApp or email with the link, or copied it. Retries with the same send_id stay one record.
  if(action==='contacts'&&method==='POST'){const b=await body(req);requireThat(typeof b.send_id==='string'&&/^[0-9a-f-]{36}$/.test(b.send_id),'invalid_fields');requireThat(['whatsapp','email','copy'].includes(b.channel),'invalid_fields');
   const used=await one(db,'SELECT case_id FROM contacts WHERE send_id=?',b.send_id);requireThat(!used||used.case_id===id,'conflict',409);
@@ -370,6 +421,6 @@ export default {async fetch(req,env){const path=new URL(req.url).pathname;
  const localTarget=['localhost','127.0.0.1'].includes(target.hostname);
  const localOrigin=localTarget && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
  if(origin && origin!==ORIGIN && !localOrigin)return reply({error:'origin_denied'},403);
- if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin===ORIGIN?ORIGIN:localOrigin?origin:ORIGIN,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Case-Token','Vary':'Origin'}});
+ if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin===ORIGIN?ORIGIN:localOrigin?origin:ORIGIN,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Case-Token, X-Case-Pin','Vary':'Origin'}});
  try{const out=await handle(req,env);return out instanceof Response?out:reply(out,200,origin);}catch(e){return reply({error:e instanceof HttpError?e.message:'internal_error'},e instanceof HttpError?e.status:500,origin);}
 }};

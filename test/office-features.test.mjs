@@ -23,7 +23,7 @@ async function seed({ phone = '050-123-4567', due = addDays(30) } = {}) {
 async function call(e, path, { method = 'GET', data, auth = 'office', caseToken: ct } = {}) {
   const headers = { Origin: SITE };
   if (auth === 'office') headers.Authorization = 'Bearer ' + OFFICE_TOKEN;
-  if (ct) headers['X-Case-Token'] = ct;
+  if (ct) { headers['X-Case-Token'] = ct; headers['X-Case-Pin'] = '4567'; }
   let body;
   if (data !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(data); }
   const res = await worker.fetch(new Request('https://worker.example' + path, { method, headers, body }), e);
@@ -67,7 +67,7 @@ test('reminder uses the office template and the client mobile number', async () 
   assert.equal(r.body.whatsapp, '972501234567');
   assert.match(r.body.text, /^היי Test Client, חסר:\n• Bank\n• Sales\n/);
   assert.doesNotMatch(r.body.text, /Extra/);
-  assert.match(r.body.text, /משרד כהן$/);
+  assert.match(r.body.text, /משרד כהן\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.$/);
 });
 
 test('a client can be edited, and the internal client number never changes', async () => {
@@ -202,13 +202,13 @@ test('a client file keeps a contact person and its regular document list', async
   assert.ok(csv.split('\r\n')[0].includes('"contact_name"') && csv.includes('"דנה"'));
 });
 
-test('reminders greet the contact person and call the period a request', async () => {
+test('reminders greet the contact person and name the case', async () => {
   const db = await seed(), e = env(db);
   db.raw.prepare("UPDATE clients SET contact_name='דנה' WHERE client_id='cl1'").run();
   const r = await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} });
   assert.ok(r.body.text.startsWith('שלום דנה,'));
-  assert.ok(r.body.text.includes('לבקשת המסמכים Monthly'));
+  assert.ok(r.body.text.includes('לתיק Monthly'));
   // A template saved with the old {case} placeholder still works.
   await call(e, '/api/settings', { method: 'POST', data: { office_name: 'x', warning_days: 7, urgent_days: 2, whatsapp_template: '{client}: {case} / {request}' } });
-  assert.equal((await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text, 'דנה: Monthly / Monthly');
+  assert.equal((await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text, 'דנה: Monthly / Monthly\nלכניסה: 4 הספרות האחרונות של הנייד שלך.');
 });
