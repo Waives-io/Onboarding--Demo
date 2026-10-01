@@ -17,10 +17,28 @@ form{display:grid;gap:18px}
 table{border-collapse:collapse;width:100%;font-size:14px;text-align:right}
 th{background:var(--iris-soft);color:var(--iris-dark);font-weight:700;white-space:nowrap}
 td,th{padding:17px 18px;border-bottom:1px solid var(--line)}
+#case-head button.sort,#client-head button.sort{display:inline-flex;align-items:center;gap:5px;margin:-5px -7px;padding:5px 7px;border:0;border-radius:6px;background:transparent;color:inherit;box-shadow:none;text-shadow:none;transform:none;filter:none;font-weight:inherit;line-height:1.35;text-align:right}
+#case-head button.sort:hover,#client-head button.sort:hover{background:rgb(255 255 255 / 58%);color:#34434c}
+#case-head button.sort:active,#client-head button.sort:active{transform:none;box-shadow:none}
+#case-head button.sort:focus-visible,#client-head button.sort:focus-visible{outline-width:2px;outline-offset:1px}
+#case-head button.sort span,#client-head button.sort span{display:inline-block;min-width:11px;color:var(--iris);font-size:9px;line-height:1}
+#case-head th[aria-sort=ascending],#case-head th[aria-sort=descending],#client-head th[aria-sort=ascending],#client-head th[aria-sort=descending]{background:#dfe6ea;color:#34434c;box-shadow:inset 0 -3px var(--iris)}
+#case-head th[aria-sort=ascending] button.sort,#case-head th[aria-sort=descending] button.sort,#client-head th[aria-sort=ascending] button.sort,#client-head th[aria-sort=descending] button.sort{color:#34434c;font-weight:800}
+#client-head button.sort[data-sort=new]{margin:-3px 0;padding:3px 9px;border:1px solid #aebbc3;border-radius:999px;background:#fff;color:var(--iris-dark);font-size:12px;white-space:nowrap}
+#client-head button.sort[data-sort=new]:hover{border-color:var(--iris);background:#f8fafb}
 td small{margin-top:5px;max-width:240px;font-size:13px}
 td strong{display:block}
 .case-name{border:0;padding:0;background:none;color:var(--navy);text-align:right}
 .case-name:hover{background:none;color:var(--teal)}
+.client-cases{display:flex;min-width:130px;max-width:260px;flex-direction:column;align-items:flex-start;gap:5px}
+.client-cases .case-name{max-width:100%;color:var(--iris-dark);font-weight:600;line-height:1.4;overflow-wrap:anywhere;white-space:normal}
+.client-cases .case-name:hover{color:#34434c;text-decoration:underline;text-underline-offset:3px}
+#client-rows tr.fresh td{background:#fff8e8}
+#client-rows tr.fresh td:first-child{border-inline-start:4px solid var(--signal)}
+#client-rows tr.fresh small{color:#704a0b;font-weight:700}
+small.contact{display:block;margin-top:6px;max-width:190px;line-height:1.35}
+small.contact[data-contacted=no]{color:#76500b;font-weight:700}
+small.contact[data-contacted=yes]{color:var(--iris-dark)}
 .badge{font-size:14px}
 progress{width:100%;height:8px;border:0;border-radius:9px;accent-color:var(--accent)}
 progress::-webkit-progress-bar{background:#f1ddd7;border-radius:9px}
@@ -39,6 +57,10 @@ dialog{max-width:850px;max-height:90vh;overflow:auto}
 .card{padding:24px;margin-bottom:16px}
 .card h3{margin-bottom:8px}
 .card-head{display:flex;justify-content:space-between;gap:12px;align-items:start}
+.panel.card.review-all{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 18px;border-color:#c7d1d7;border-inline-start:5px solid var(--iris);background:var(--iris-soft)}
+.review-all p{margin:0;color:var(--iris-dark);font-size:14px;line-height:1.55}
+.review-all p strong{color:#34434c}
+.review-all .primary{flex:0 0 auto;padding:9px 14px;font-size:14px}
 .file-list{list-style:none;padding:0;margin:12px 0}
 .file-list li{padding:10px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;font-size:14px;overflow-wrap:anywhere}
 .file-list a{color:var(--iris-dark)}
@@ -122,6 +144,12 @@ dialog .actions button{flex-basis:100%}
 .toolbar{align-items:stretch}
 .welcome h1{font-size:25px}
 .client-page{padding-top:125px}
+.panel.card.review-all{align-items:stretch;flex-direction:column;gap:13px}
+.review-all .primary{width:100%}
 }
 
 
+/* Phone numbers and emails never break mid-number; the name column keeps room for a business name. */
+#client-rows td:nth-child(3),#client-rows td:nth-child(4){white-space:nowrap;direction:ltr;text-align:right}
+#client-rows td:first-child{min-width:150px}
+.filters #newest{align-self:end;white-space:nowrap}
