@@ -153,13 +153,14 @@ async function sendDialog(caseId,fresh=false,prefer=''){
  const wa=/^\d{11,15}$/.test(c.whatsapp||'')?c.whatsapp:'',mail=c.email||'';
  const cards=[['whatsapp','WhatsApp',wa?c.phone:'',wa?'':'אין ללקוח נייד תקין'],['email','דוא״ל',mail,mail?'':'אין ללקוח כתובת דוא״ל'],['copy','העתקת ההודעה','להדבקה בכל מקום','']];
  dialog(fresh?'התיק נפתח. שולחים ללקוח את הקישור':'שליחה ללקוח',`<p class="muted">בוחרים איך לשלוח. ההודעה נפתחת מוכנה, והשליחה עצמה נעשית מתוך WhatsApp או מתיבת הדוא״ל.</p>
-<div class="channel-cards" role="radiogroup" aria-label="איך לשלוח">${cards.map(([k,label,to,why])=>`<button type="button" role="radio" aria-checked="false" data-channel="${k}" ${why?'disabled':''}><strong>${label}</strong><small>${esc(why||to)}</small></button>`).join('')}</div>
+<div class="channel-cards" role="radiogroup" aria-label="איך לשלוח">${cards.map(([k,label,to,why])=>`<button type="button" role="radio" aria-checked="false" data-channel="${k}" ${why?'disabled':''}><strong>${label}</strong><small>${why?esc(why):`<bdi dir="ltr">${esc(to)}</bdi>`}</small></button>`).join('')}</div>
 <div id="send-step" hidden><label>ההודעה ללקוח<textarea id="send-text" rows="8">${esc(text)}</textarea></label><div class="actions"><a class="primary button-link" id="send-go" rel="noopener noreferrer"></a></div></div>
 <details><summary>הקישור האישי לתיק</summary><p class="link-box">${esc(shown)}</p><a href="${esc(shown)}" target="_blank" rel="noopener noreferrer">צפייה בעמוד של הלקוח ↗</a><p class="muted">הקישור הגיע למישהו אחר? אפשר לבטל אותו וליצור קישור חדש. הקישור הישן יפסיק לעבוד מיד.</p><button type="button" id="revoke-link">ביטול הקישור ויצירת קישור חדש</button></details>`);
  let channel='';const go=$('#send-go'),area=$('#send-text');
  const target=()=>channel==='whatsapp'?(()=>{const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',area.value);return u.href;})():channel==='email'?`mailto:${encodeURIComponent(mail)}?subject=${encodeURIComponent('השלמת מסמכים — '+c.name)}&body=${encodeURIComponent(area.value)}`:'#';
  const choose=k=>{channel=k;document.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-checked',String(b.dataset.channel===k)));$('#send-step').hidden=false;
-  go.textContent=k==='whatsapp'?`פתיחת WhatsApp ל־${c.phone}`:k==='email'?`פתיחת הדוא״ל ל־${mail}`:'העתקת ההודעה';
+  // <bdi> keeps a phone number or an address in its own direction inside the Hebrew label.
+  go.innerHTML=k==='whatsapp'?`פתיחת WhatsApp ל־<bdi dir="ltr">${esc(c.phone)}</bdi>`:k==='email'?`פתיחת הדוא״ל ל־<bdi dir="ltr">${esc(mail)}</bdi>`:'העתקת ההודעה';
   if(k==='whatsapp')go.target='_blank';else go.removeAttribute('target');go.href=target();};
  area.oninput=()=>{if(channel)go.href=target();};
  document.querySelectorAll('[data-channel]').forEach(b=>b.onclick=()=>choose(b.dataset.channel));
