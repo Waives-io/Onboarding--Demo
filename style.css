@@ -32,3 +32,7 @@ main,body:has(header nav) main{max-width:none;margin:0 var(--sidebar) 0 0;paddin
 @media(max-width:390px){.filters{grid-template-columns:1fr}.filters label:first-child{grid-column:auto}.stats>.stat{min-height:84px}.case-stats span{font-size:.68rem}.case-stats strong{font-size:1.3rem}.form-grid{grid-template-columns:1fr}.channel-cards{grid-template-columns:1fr}}
 /* Before sign-in there is no user to show. */
 .session-actions:has(#logout[hidden]){display:none}
+/* The date filter has no options to carry its name, so its label stays visible inside the chip. */
+.filters label.due-filter{font-size:.82rem;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding-inline-start:12px;color:var(--gray)}
+.filters label.due-filter input{border:0;padding-inline-start:0;min-width:0;flex:1;background:transparent}
+.filters label.due-filter span{white-space:nowrap;font-weight:700}
