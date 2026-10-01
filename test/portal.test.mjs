@@ -37,7 +37,7 @@ test('preflight allows only the published site and required headers', async () =
   }), { DB: dbReturning(null) });
   assert.equal(response.status, 204);
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://waives-io.github.io');
-  assert.equal(response.headers.get('access-control-allow-headers'), 'Content-Type, Authorization, X-Case-Token');
+  assert.equal(response.headers.get('access-control-allow-headers'), 'Content-Type, Authorization, X-Case-Token, X-Case-Pin');
 });
 
 test('portal requires a valid case capability', async () => {

@@ -60,11 +60,18 @@ export function validPhone(phone) {
  const digits = String(phone ?? '').replace(/[\s\-().]/g, '');
  return israeliMobile(digits) !== null || /^\+[1-9]\d{7,14}$/.test(digits);
 }
+// The client answered "I don't have this document" (the note may be empty). null or undefined means no answer.
+export const answeredMissing = r => r.status === 'missing' && r.unavailable_note != null;
+// The last 4 digits of the client's phone open their link. A client without a usable phone has no PIN.
+export function phonePin(phone) { const d = String(phone ?? '').replace(/\D/g, ''); return d.length >= 4 ? d.slice(-4) : ''; }
+// Stored and sent as 05X-XXXXXXX, the format the office and Fireberry use.
+export function formatMobile(phone) { const w = israeliMobile(phone); return w ? '0' + w.slice(3, 5) + '-' + w.slice(5) : null; }
 // Before the client finishes, progress counts required documents sent. After that it counts documents the office approved.
 export function caseProgress(status, requirements) {
  if (['collecting','action_required'].includes(status)) {
   const required = requirements.filter(r => r.required);
-  return { progress_kind: 'sent', progress_done: required.filter(r => ['uploaded','approved'].includes(r.status)).length, progress_total: required.length };
+  // A document the client said they do not have counts as answered: the office decides about it next.
+  return { progress_kind: 'sent', progress_done: required.filter(r => ['uploaded','approved'].includes(r.status) || answeredMissing(r)).length, progress_total: required.length };
  }
  const counted = requirements.filter(r => r.required || r.status !== 'missing');
  return { progress_kind: 'approved', progress_done: counted.filter(r => r.status === 'approved').length, progress_total: counted.length };
@@ -86,7 +93,7 @@ export function deriveStatus(requirements, current = 'collecting') {
  if (requirements.some(r=>r.status === 'correction')) return 'action_required';
  // Optional requirements can remain missing. Once uploaded they must also be reviewed.
  if (requirements.length && requirements.every(r=>r.status==='approved' || (!r.required && r.status==='missing'))) return 'ready_for_work';
- if (requirements.every(r=>!r.required || ['uploaded','approved'].includes(r.status))) return 'client_completed';
+ if (requirements.every(r=>!r.required || ['uploaded','approved'].includes(r.status) || answeredMissing(r))) return 'client_completed';
  return 'collecting';
 }
 export function parseCSV(text) {

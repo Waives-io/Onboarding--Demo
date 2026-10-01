@@ -64,5 +64,14 @@ cases.forEach(([client, type, docs, range, due, status, states, note], i) => {
   });
   out.push(`INSERT OR IGNORE INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES (${q(id + '-created')},${q(id)},'case_created',${ADMIN_NAME},'staff',${ADMIN});`);
 });
+// Added 2026-10-01: each file gets a contact person and a regular document list. Only fills files that have none yet.
+const contacts = {
+  'demo-cl-01': ['אורי זית', 'monthly'], 'demo-cl-02': ['רונית כהן', 'ct-vat-period'], 'demo-cl-03': ['שי גפני', 'monthly'],
+  'demo-cl-04': ['מירב לוי', 'ct-annual-selfemployed'], 'demo-cl-05': ['מיכל ברק', 'monthly'], 'demo-cl-06': ['גל אלון', 'ct-annual-company'],
+  'demo-cl-07': ['יוסי מזרחי', 'ct-vat-period'], 'demo-cl-08': ['תמר יד', 'monthly'], 'demo-cl-09': ['נועה שפירא', 'ct-annual-selfemployed'],
+  'demo-cl-10': ['דוד אופה', 'monthly'],
+};
+for (const [id, [person, list]] of Object.entries(contacts))
+  out.push(`UPDATE clients SET contact_name=${q(person)},regular_template_id=(SELECT template_id FROM templates WHERE template_id=${q(list)}) WHERE client_id=${q(id)} AND contact_name='';`);
 writeFileSync(new URL('./demo-data.sql', import.meta.url), out.join('\n') + '\n');
 console.log(`${clients.length} clients, ${cases.length} cases, ${out.length} statements`);
