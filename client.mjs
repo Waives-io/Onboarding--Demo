@@ -39,7 +39,7 @@ ${open?`<div class="doc-panel" id="panel-${esc(id)}" role="group" aria-label="ה
 function render(c){const locked=['closed','archived'].includes(c.status),missing=c.requirements.filter(r=>r.status==='correction'||r.required&&!['uploaded','approved'].includes(r.status));
  app.innerHTML=`<section class="welcome"><span class="eyebrow">שלום ${esc(c.client_name)}</span><div class="card-head"><h1>${esc(c.name)}</h1>${badge(c.status)}</div><dl class="meta-grid"><div><dt>תקופת הדיווח</dt><dd>${esc(c.reporting_period)}</dd></div><div><dt>תאריך יעד להעברת החומרים</dt><dd>${date(c.due_date)}</dd></div></dl><p>אפשר להעלות בהדרגה ולחזור לקישור הזה בכל זמן.</p>${progress(c)}</section>
 ${!locked&&missing.length?`<section class="panel card still-needed"><h2>עוד חסר: ${missing.length}</h2><ul>${missing.map(r=>`<li><a href="#req-${esc(r.requirement_id)}" data-jump="${esc(r.requirement_id)}">${esc(r.name)}</a>${r.status==='correction'?' · נדרש תיקון':''}</li>`).join('')}</ul></section>`:''}
-${c.status==='client_completed'?'<section class="success done-state" role="status"><h2>כל המסמכים נשלחו למשרד</h2><p>המשרד יבדוק אותם ויעדכן אם צריך תיקון. אין צורך לעשות דבר נוסף כרגע.</p></section>':c.status==='ready_for_work'?'<p class="success">כל המסמכים נבדקו ואושרו. התיק מוכן לטיפול.</p>':''}
+${c.status==='client_completed'?`<section class="success done-state client-complete" role="status"><div class="completion-illustration" aria-hidden="true"><div class="completion-folder"><i></i><i></i></div><span class="completion-tick">✓</span></div><span class="badge green">נשלח למשרד</span><h2>כל המסמכים נשלחו למשרד</h2><p>המשרד יבדוק אותם ויעדכן אם צריך תיקון. אין צורך לעשות דבר נוסף כרגע.</p><div class="completion-summary">${progress(c)}</div></section>`:c.status==='ready_for_work'?'<p class="success">כל המסמכים נבדקו ואושרו. התיק מוכן לטיפול.</p>':''}
 ${locked?'<p class="pending-note">התיק סגור. לצורך שינוי אפשר לפנות למשרד.</p>':''}
 <div class="doc-rows">${c.requirements.map(r=>row(r,locked)).join('')}</div>
 ${locked||!missing.length?'':`<div class="sticky-finish"><p>נותרו ${missing.length} מסמכי חובה או תיקונים לשליחה.<br><span class="muted">כשכל מסמכי החובה יישלחו, התיק יעבור אוטומטית לבדיקת המשרד.</span></p></div>`}
@@ -68,14 +68,15 @@ function bind(c){
 // Sends the chosen files one by one. A file already sent leaves the draft at once, so a failure halfway only keeps the rest.
 // The note travels with the first file only, so the office sees it once.
 async function send(c,id,button){const r=c.requirements.find(x=>x.requirement_id===id),d=draftOf(id);if(!d.files.length)return;
- button.disabled=true;let first=true;
- try{while(d.files.length){const file=d.files[0],note=first?d.note.trim():'';setStatus(id,'שומר את '+file.name+'…');
+ button.disabled=true;let waiting=false;
+ try{while(d.files.length){const file=d.files[0],note=d.note.trim();setStatus(id,'שומר את '+file.name+'…');
    const storageKey='upload:'+[id,file.name,file.size,file.lastModified,note].join(':');let sid=sessionStorage.getItem(storageKey);if(!sid){sid=crypto.randomUUID();sessionStorage.setItem(storageKey,sid);}
    const data=new FormData();data.set('file',file);data.set('requirement_id',id);data.set('submission_id',sid);if(note)data.set('client_note',note);
-   const result=await call('/api/portal/uploads',data);sessionStorage.removeItem(storageKey);d.files.shift();first=false;
-   if(result.status!=='stored'){toast('הקובץ ממתין לאישור שמירה. אין להעלות אותו שוב.');break;}}
-  if(!d.files.length)drafts.delete(id);else drafts.set(id,{...d,note:''});
-  await load();setStatus(id,'נשלח למשרד ✓');if(current.status==='client_completed')window.scrollTo({top:0,behavior:'smooth'});}
+   const result=await call('/api/portal/uploads',data);
+   if(result.status!=='stored'){waiting=true;toast('הקובץ ממתין לאישור שמירה. אין צורך להעלות אותו שוב.');break;}
+   sessionStorage.removeItem(storageKey);d.files.shift();d.note='';}
+  if(!d.files.length)drafts.delete(id);else drafts.set(id,d);
+  await load();setStatus(id,waiting?'ממתינים לאישור שמירה.':'נשלח למשרד ✓');if(current.status==='client_completed')window.scrollTo({top:0,behavior:'smooth'});}
  catch(error){drafts.set(id,d);if(r)render(current);setStatus(id,error.message);}}
 
 if(!/^[a-f0-9]{64}$/.test(token))app.innerHTML='<section class="panel card"><h1>נדרש קישור אישי</h1><p>פתחו את הקישור שקיבלתם מהמשרד כדי לראות את מסמכי התיק.</p></section>';else load().catch(e=>{app.innerHTML=`<section class="panel card"><h1>לא ניתן לפתוח את התיק</h1><p>${esc(e.message)}</p><button id="retry">ניסיון נוסף</button></section>`;$('#retry').onclick=()=>location.reload();});
