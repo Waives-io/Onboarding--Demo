@@ -99,7 +99,7 @@ async function caseView(db,id,isOffice=false) {
  const c=await one(db,`SELECT cases.*,clients.name AS client_name,clients.reference,clients.email,clients.phone,clients.business_number,staff.name AS owner_name${isOffice?','+contactSql('cases'):''} FROM cases JOIN clients USING(client_id) LEFT JOIN staff ON staff.staff_id=cases.owner_id WHERE case_id=?`,id);
  requireThat(c,'not_found',404); delete c.token_hash;
  const requirements=await all(db,'SELECT * FROM requirements WHERE case_id=? ORDER BY position',id);
- for(const r of requirements){r.uploads=await all(db,`SELECT submission_id,filename,mime_type,size,version,state,created_at,stored_at${isOffice?',drive_file_id,drive_folder_id':''} FROM uploads WHERE requirement_id=? ORDER BY version DESC`,r.requirement_id);if(!isOffice)delete r.drive_folder_id;}
+ for(const r of requirements){r.uploads=await all(db,`SELECT submission_id,filename,mime_type,size,version,state,created_at,stored_at${isOffice?',drive_file_id,drive_folder_id,client_note':''} FROM uploads WHERE requirement_id=? ORDER BY version DESC`,r.requirement_id);if(!isOffice)delete r.drive_folder_id;}
  const meta=caseMeta(c,requirements,await settings(db),localDate());
  if(isOffice)meta.whatsapp=israeliMobile(c.phone);
  if(!isOffice){for(const k of ['email','phone','business_number','drive_folder_id','client_id','reference','link_version','owner','owner_id','owner_name'])delete c[k];}
@@ -218,12 +218,14 @@ async function handle(req,env) {
  requireThat(Number(req.headers.get('content-length')||0)<=4500000,'too_large',413);
  let form;try{form=await req.formData();}catch{throw new HttpError(400,'invalid_form');}
  const rid=form.get('requirement_id');let submission=form.get('submission_id');
+ // The client's note goes to the office only: not to Make, events, exports or the client view. Too long is refused, not cut.
+ const rawNote=form.get('client_note');requireThat(rawNote===null||typeof rawNote==='string','invalid_fields');const note=rawNote===null?'':clean(rawNote,500)||null;
  requireThat(typeof submission==='string'&&/^[0-9a-f-]{36}$/.test(submission),'invalid_submission_id');
  const r=await one(db,'SELECT * FROM requirements WHERE requirement_id=? AND case_id=?',rid,c.case_id);requireThat(r,'not_found',404);
  const file=form.get('file'),f=await validateFile(file);
  await expirePending(db,c.case_id);
  const prior=await one(db,'SELECT * FROM uploads WHERE submission_id=?',submission);
- if(prior){requireThat(prior.requirement_id===rid&&prior.content_hash===f.contentHash,'submission_conflict',409);if(prior.state!=='failed')return {submission_id:submission,status:prior.state, retry_safe:false};
+ if(prior){requireThat(prior.requirement_id===rid&&prior.content_hash===f.contentHash&&(prior.client_note||null)===(note||null),'submission_conflict',409);if(prior.state!=='failed')return {submission_id:submission,status:prior.state, retry_safe:false};
  // A failed attempt keeps its id so a late receipt can only ever match that attempt. The retry is a new submission.
  submission=uid();}
  requireThat(r.status!=='approved','already_approved',409);
@@ -233,7 +235,7 @@ async function handle(req,env) {
  const version=(await one(db,'SELECT coalesce(max(version),0)+1 AS n FROM uploads WHERE requirement_id=?',rid)).n;
  // The approval check is repeated inside the insert so an approval that lands after the reads above wins.
  // The upload_pending_lock index allows one pending upload per requirement.
- let claimed;try{claimed=(await stmt(db,"INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM requirements WHERE requirement_id=? AND status!='approved')",submission,rid,f.filename,f.mime,f.size,f.contentHash,version,rid).run()).meta.changes===1;}catch{throw new HttpError(409,'upload_pending');}
+ let claimed;try{claimed=(await stmt(db,"INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,client_note) SELECT ?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM requirements WHERE requirement_id=? AND status!='approved')",submission,rid,f.filename,f.mime,f.size,f.contentHash,version,note||null,rid).run()).meta.changes===1;}catch{throw new HttpError(409,'upload_pending');}
  requireThat(claimed,'already_approved',409);
  const u=await one(db,'SELECT * FROM uploads WHERE submission_id=?',submission);
  const payload=new FormData();for(const [k,v]of Object.entries({action:r.drive_folder_id?'upload_document_revision':'upload_document',submission_id:submission,client_id:c.client_id,client_reference:c.client_reference,full_name:c.client_name,email:c.client_email,case_id:c.case_id,requirement_id:rid,requirement_name:r.name,reporting_period:c.reporting_period,version:String(version),filename:f.filename,content_hash:f.contentHash,requirement_folder_id:r.drive_folder_id||'',note:r.drive_folder_id||''}))payload.set(k,v);
