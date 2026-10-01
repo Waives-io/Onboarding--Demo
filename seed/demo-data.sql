@@ -119,3 +119,13 @@ INSERT OR IGNORE INTO uploads(submission_id,requirement_id,filename,mime_type,si
 INSERT OR IGNORE INTO requirements(requirement_id,case_id,document_id,name,required,max_files,position,status,correction_message) VALUES ('demo-case-17-r3','demo-case-17','bank','תדפיס בנק',1,3,2,'approved','');
 INSERT OR IGNORE INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state,created_at,stored_at) VALUES ('demo-case-17-r3-u1','demo-case-17-r3','תדפיס בנק.pdf','application/pdf',184320,'demo',1,'stored','2026-09-26T10:00:00.000Z','2026-09-26T10:00:05.000Z');
 INSERT OR IGNORE INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES ('demo-case-17-created','demo-case-17','case_created',(SELECT name FROM staff WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1),'staff',(SELECT staff_id FROM staff WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1));
+UPDATE clients SET contact_name='אורי זית',regular_template_id=(SELECT template_id FROM templates WHERE template_id='monthly') WHERE client_id='demo-cl-01' AND contact_name='';
+UPDATE clients SET contact_name='רונית כהן',regular_template_id=(SELECT template_id FROM templates WHERE template_id='ct-vat-period') WHERE client_id='demo-cl-02' AND contact_name='';
+UPDATE clients SET contact_name='שי גפני',regular_template_id=(SELECT template_id FROM templates WHERE template_id='monthly') WHERE client_id='demo-cl-03' AND contact_name='';
+UPDATE clients SET contact_name='מירב לוי',regular_template_id=(SELECT template_id FROM templates WHERE template_id='ct-annual-selfemployed') WHERE client_id='demo-cl-04' AND contact_name='';
+UPDATE clients SET contact_name='מיכל ברק',regular_template_id=(SELECT template_id FROM templates WHERE template_id='monthly') WHERE client_id='demo-cl-05' AND contact_name='';
+UPDATE clients SET contact_name='גל אלון',regular_template_id=(SELECT template_id FROM templates WHERE template_id='ct-annual-company') WHERE client_id='demo-cl-06' AND contact_name='';
+UPDATE clients SET contact_name='יוסי מזרחי',regular_template_id=(SELECT template_id FROM templates WHERE template_id='ct-vat-period') WHERE client_id='demo-cl-07' AND contact_name='';
+UPDATE clients SET contact_name='תמר יד',regular_template_id=(SELECT template_id FROM templates WHERE template_id='monthly') WHERE client_id='demo-cl-08' AND contact_name='';
+UPDATE clients SET contact_name='נועה שפירא',regular_template_id=(SELECT template_id FROM templates WHERE template_id='ct-annual-selfemployed') WHERE client_id='demo-cl-09' AND contact_name='';
+UPDATE clients SET contact_name='דוד אופה',regular_template_id=(SELECT template_id FROM templates WHERE template_id='monthly') WHERE client_id='demo-cl-10' AND contact_name='';
