@@ -263,3 +263,49 @@ test('an extra optional upload keeps the case waiting for the office', async t =
   assert.equal(reqStatus(db, 'req-opt'), 'uploaded');
   assert.equal(caseRow(db).status, 'client_completed');
 });
+
+function uploadWithNote(e, note, submission_id = crypto.randomUUID()) {
+  const form = new FormData();
+  form.set('file', new File(['%PDF-1.4 noted'], 'noted.pdf', { type: 'application/pdf' }));
+  form.set('requirement_id', 'req-a');
+  form.set('submission_id', submission_id);
+  if (note !== undefined) form.set('client_note', note);
+  return call(e, '/api/portal/uploads', { method: 'POST', data: form }).then(r => ({ ...r, submission_id }));
+}
+
+test('a client note is stored with the file and shown only to the office', async t => {
+  const db = await seed(), e = env(db);
+  const make = mockMake(t, form => receiptFor(form.get('submission_id')));
+  const r = await uploadWithNote(e, '  זה התדפיס של אוגוסט בלבד  ');
+  assert.equal(r.status, 200);
+  assert.equal(row(db, 'SELECT client_note FROM uploads WHERE submission_id=?', r.submission_id).client_note, 'זה התדפיס של אוגוסט בלבד');
+  // Make never receives the note.
+  assert.equal(make[0].get('client_note'), null);
+  assert.ok(![...make[0].values()].some(v => typeof v === 'string' && v.includes('אוגוסט')));
+  const office = await call(e, '/api/cases/case1', { office: true });
+  assert.equal(office.body.requirements[0].uploads[0].client_note, 'זה התדפיס של אוגוסט בלבד');
+  const portal = await call(e, '/api/portal');
+  assert.equal(portal.body.requirements[0].uploads[0].client_note, undefined);
+  assert.ok(!JSON.stringify(office.body.events).includes('אוגוסט'));
+});
+
+test('a note is optional, and a long or control-character note is refused', async t => {
+  const db = await seed([{ id: 'req-a', required: 1, max: 5 }]), e = env(db);
+  mockMake(t, form => receiptFor(form.get('submission_id')));
+  const plain = await uploadWithNote(e, undefined);
+  assert.equal(plain.status, 200);
+  assert.equal(row(db, 'SELECT client_note FROM uploads WHERE submission_id=?', plain.submission_id).client_note, null);
+  assert.equal(row(db, 'SELECT client_note FROM uploads WHERE submission_id=?', (await uploadWithNote(e, '   ')).submission_id).client_note, null);
+  assert.equal((await uploadWithNote(e, 'א'.repeat(501))).status, 400);
+  assert.equal((await uploadWithNote(e, 'bad\u0001note')).status, 400);
+  assert.equal(row(db, "SELECT count(*) n FROM uploads WHERE state='stored'").n, 2);
+});
+
+test('retrying the same submission with a different note is a conflict', async t => {
+  const db = await seed(), e = env(db);
+  mockMake(t, form => receiptFor(form.get('submission_id')));
+  const id = crypto.randomUUID();
+  assert.equal((await uploadWithNote(e, 'first', id)).status, 200);
+  assert.equal((await uploadWithNote(e, 'first', id)).status, 200);
+  assert.equal((await uploadWithNote(e, 'changed', id)).body.error, 'submission_conflict');
+});
