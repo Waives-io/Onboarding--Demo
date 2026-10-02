@@ -55,3 +55,29 @@ main,body:has(header nav) main{max-width:none;margin:0 var(--sidebar) 0 0;paddin
 
 /* The reminder sits under the contact line on the board. */
 #rows [data-whatsapp]{display:block;margin-top:6px;white-space:nowrap}
+
+/* Demo note: a thin strip at the very top of every page. It never floats over the menu or the content. */
+:root{--bar:24px}
+.demo-bar{position:sticky!important;top:0;inset:auto!important;z-index:90;display:block!important;width:auto!important;height:var(--bar);min-height:0!important;margin:0;padding:3px 12px!important;border:0!important;border-bottom:1px solid #ead9af!important;border-radius:0!important;background:#fff8e8;box-shadow:none!important;color:#634714;font-size:12px;line-height:18px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header:not(.office-shell){position:sticky!important;top:var(--bar)!important}
+@media(min-width:721px){.office-shell{top:var(--bar)!important;height:calc(100vh - var(--bar))!important}}
+
+/* Date fields read DD/MM/YYYY. The real date input is hidden; the calendar button opens it. */
+.date-field{position:relative;display:flex;align-items:center;gap:4px;flex:1;min-width:0}
+.date-field .date-text{flex:1;min-width:0;text-align:right}
+.date-field .date-real{position:absolute;bottom:0;inset-inline-start:0;width:1px;height:1px;margin:0;padding:0;border:0;opacity:0;pointer-events:none}
+.date-field .date-pick{flex:none;min-height:40px;padding:4px 9px;border-radius:10px}
+.filters label.due-filter .date-pick{border:0;background:transparent}
+
+/* One progress bar, two shades: received (light) and approved (dark). */
+.duo-bar{display:block;width:100%;height:8px}
+.duo-bg{fill:#dce9e2}.duo-got{fill:#a8d8bf}.duo-ok{fill:var(--green)}
+.case-stats .case-progress{text-align:right}.case-stats .case-progress strong{font-size:1rem}.case-stats .case-progress .duo-bar{margin-top:8px}
+
+/* "עוד": actions that are rarely needed, out of the way of the main button. */
+.more-menu{position:relative;flex:none}
+.more-menu>summary{list-style:none;min-height:44px;display:flex;align-items:center;padding:9px 18px;border:1px solid #c9c8cb;border-radius:999px;background:#fff;font-weight:700;cursor:pointer}
+.more-menu>summary::-webkit-details-marker{display:none}
+.more-menu>summary:after{content:'▾';margin-inline-start:6px}
+.more-items{position:absolute;z-index:30;inset-inline-end:0;top:calc(100% + 6px);width:min(280px,calc(100vw - 32px));display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff;box-shadow:0 8px 24px #0000001a}
+.more-items button,.more-items select{width:100%}

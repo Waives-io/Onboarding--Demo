@@ -76,6 +76,25 @@ export function caseProgress(status, requirements) {
  const counted = requirements.filter(r => r.required || r.status !== 'missing');
  return { progress_kind: 'approved', progress_done: counted.filter(r => r.status === 'approved').length, progress_total: counted.length };
 }
+// One stable count for every screen: documents received (sent, waiting or approved) and documents approved, out of the
+// documents that matter (required ones, and optional ones the client actually sent). An untouched optional document is left out.
+export function docCounts(requirements) {
+ const counted = requirements.filter(r => r.required || r.status !== 'missing');
+ return { docs_total: counted.length, docs_received: counted.filter(r => ['uploaded','approved'].includes(r.status)).length, docs_approved: counted.filter(r => r.status === 'approved').length };
+}
+const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+// A period in words: a full year is "2025", a full month is "אוגוסט 2026". Anything else is a DD/MM/YYYY range kept left-to-right
+// with Unicode isolates (U+2066 … U+2069), so it reads start to end inside Hebrew text.
+export function periodText(start, end, fallback = '') {
+ const m = /^(\d{4})-(\d{2})-(\d{2})$/, a = m.exec(start || ''), b = m.exec(end || '');
+ if (!a || !b) return fallback ? '\u2066' + fallback + '\u2069' : '';
+ const last = new Date(Date.UTC(+b[1], +b[2], 0)).getUTCDate();
+ if (a[3] === '01' && +b[3] === last) {
+  if (a[1] === b[1] && a[2] === '01' && b[2] === '12') return a[1];
+  if (a[1] === b[1] && a[2] === b[2]) return MONTHS[+a[2] - 1] + ' ' + a[1];
+ }
+ return '\u2066' + [a, b].map(x => x[3] + '/' + x[2] + '/' + x[1]).join('–') + '\u2069';
+}
 export async function validateFile(file) {
  requireThat(file instanceof File && file.size >= 8 && file.size <= 4*1024*1024, 'invalid_file');
  const ext = file.name.split('.').pop().toLowerCase();

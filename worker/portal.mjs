@@ -1,5 +1,5 @@
 import legacy from './intake.mjs';
-import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone,phonePin,formatMobile} from './domain.mjs';
+import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,docCounts,periodText,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone,phonePin,formatMobile} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
 const SITE=ORIGIN+'/Onboarding--Demo/';
 const now=()=>new Date().toISOString();
@@ -40,7 +40,7 @@ function syncCase(db,id) {
  WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved') AND unavailable_note IS NULL) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
-const DEFAULT_REMINDER='שלום {client},\nלתיק {case} ({period}) חסרים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
+const DEFAULT_REMINDER='שלום {client},\nלתיק {case} חסרים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
 // What a visitor can choose on the landing page, in their words, and the case type it suggests to the office.
 const NEEDS={refund:{label:'החזר מס',template:'ct-refund'},annual_individual:{label:'דוח שנתי – שכיר או יחיד',template:'ct-annual-individual'},annual_selfemployed:{label:'דוח שנתי – עצמאי',template:'ct-annual-selfemployed'},annual_company:{label:'דוח שנתי – חברה',template:'ct-annual-company'},open_business:{label:'פתיחת עסק',template:'ct-open-business'},capital:{label:'הצהרת הון',template:'ct-capital-declaration'},other:{label:'משהו אחר',template:null}};
 // The link asks for the last 4 digits of the client's mobile. Every message says so, also a custom one.
@@ -57,7 +57,7 @@ const portalLink=async(env,db,id)=>{const version=async()=>(await one(db,'SELECT
 const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
 function reminderText(s,view,link) {
  const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction')&&!(r.status==='missing'&&r.unavailable_note!=null));
- const values={client:view.contact_name||view.client_name,request:view.name,case:view.name,period:view.reporting_period,due:ddmmyyyy(view.due_date),office:s.office_name,link,
+ const values={client:view.contact_name||view.client_name,request:view.name,case:view.name,period:periodText(view.period_start,view.period_end,view.reporting_period),due:ddmmyyyy(view.due_date),office:s.office_name,link,
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
  return {missing,text:withPinHint((s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m),view.phone)};
 }
@@ -65,7 +65,7 @@ function reminderText(s,view,link) {
 const contactSql=t=>`(SELECT count(*) FROM contacts WHERE case_id=${t}.case_id) contact_count,(SELECT max(created_at) FROM contacts WHERE case_id=${t}.case_id) last_contact_at,(SELECT channel FROM contacts WHERE case_id=${t}.case_id ORDER BY created_at DESC LIMIT 1) last_channel`;
 // One definition of "waiting for review" for the approve-all button, the route and its events.
 const REVIEWABLE="r.case_id=? AND r.status='uploaded' AND EXISTS(SELECT 1 FROM uploads u WHERE u.requirement_id=r.requirement_id AND u.state='stored') AND NOT EXISTS(SELECT 1 FROM uploads u WHERE u.requirement_id=r.requirement_id AND u.state='pending')";
-const caseMeta=(c,requirements,s,today)=>({...caseProgress(c.status,requirements),...deadlineState(c.due_date,c.status,today,s.warning_days,s.urgent_days)});
+const caseMeta=(c,requirements,s,today)=>({...caseProgress(c.status,requirements),...docCounts(requirements),...deadlineState(c.due_date,c.status,today,s.warning_days,s.urgent_days)});
 // Every request re-reads the staff row, so a deactivated member or a role change takes effect at once.
 async function office(req,db) {
  const token=(req.headers.get('Authorization')||'').replace(/^Bearer /,'');
