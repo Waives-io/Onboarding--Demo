@@ -68,6 +68,12 @@ function openingText(s,view,link) {
  if(view.due_date)lines.push(`עד ${ddmm(view.due_date)}`);
  return withPinHint(lines.join('\n'),view.phone)+(s.office_name?'\n'+s.office_name:'');
 }
+const escHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// The email version of a message: the same words, right to left, with the link as a button.
+function emailHtml(text,link) {
+ const body=text.split('\n').filter(l=>!l.includes(link)).map(escHtml).join('<br>');
+ return `<div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.7;color:#1b1b1f;text-align:right;max-width:560px">${body}<p style="margin:22px 0"><a href="${escHtml(link)}" style="display:inline-block;background:#2e9e64;color:#ffffff;text-decoration:none;font-weight:bold;padding:13px 24px;border-radius:12px">להעלאת המסמכים</a></p></div>`;
+}
 // The office's last contact with the client about a case: when, how, and how many times.
 const contactSql=t=>`(SELECT count(*) FROM contacts WHERE case_id=${t}.case_id) contact_count,(SELECT max(created_at) FROM contacts WHERE case_id=${t}.case_id) last_contact_at,(SELECT channel FROM contacts WHERE case_id=${t}.case_id ORDER BY created_at DESC LIMIT 1) last_channel`;
 // One definition of "waiting for review" for the approve-all button, the route and its events.
@@ -383,7 +389,7 @@ async function handle(req,env) {
    requireThat(!used.has(doc),'duplicate_document',409);used.add(doc);
    statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,doc,r.required?1:0,r.max_files,i));}
   await db.batch(statements);return {template_id:id};}
- const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|opening|reconcile|owner|contacts))?$/);
+ const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|opening|email|reconcile|owner|contacts))?$/);
  if(match){const id=match[1],action=match[2],c=await ownCase(db,me,id);
  // An admin may hand the case to someone else mid-request. Writes repeat the ownership check in SQL.
  const mine='EXISTS(SELECT 1 FROM cases WHERE case_id=? AND (?=1 OR owner_id=?))',mineArgs=[id,isAdmin(me)?1:0,me.staff_id];
@@ -420,6 +426,18 @@ async function handle(req,env) {
  if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),x=await settings(db),link=await portalLink(env,db,id),{missing,text}=reminderText(x,view,link);requireThat(missing.length,'nothing_missing',409);
   await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', '),actor).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='opening'&&method==='GET'){const view=await caseView(db,id,true),link=await portalLink(env,db,id);return {text:openingText(await settings(db),view,link),link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'מסמכים לתיק '+view.name};}
+ // Sends the opening message or a reminder by email through Make. "Sent" only when Make confirms this send_id.
+ if(action==='email'&&method==='POST'){const b=await body(req),kind=b.kind==='opening'?'opening':'reminder',view=await caseView(db,id,true);
+  requireThat(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(view.email||''),'invalid_email');
+  const x=await settings(db),link=await portalLink(env,db,id),msg=kind==='opening'?{text:openingText(x,view,link),missing:[1]}:reminderText(x,view,link);
+  requireThat(msg.missing.length,'nothing_missing',409);
+  const send_id=crypto.randomUUID(),p=new FormData();
+  for(const [k,v] of Object.entries({action:'send_email',send_id,to:view.email,reply_to:x.email||'',subject:(kind==='opening'?'מסמכים לתיק ':'תזכורת: מסמכים לתיק ')+view.name+(x.office_name?' · '+x.office_name:''),html:emailHtml(msg.text,link)}))p.set(k,v);
+  let r;try{r=await make(env,p);}catch{throw new HttpError(502,'email_failed');}
+  requireThat(r?.status==='sent'&&r.send_id===send_id,'email_failed',502);
+  await db.batch([stmt(db,'INSERT INTO contacts(send_id,case_id,channel,actor_id) VALUES (?,?,?,?)',send_id,id,'email',me.staff_id),
+   stmt(db,"INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES (?,?,'email_sent',?,'staff',?)",'contact-'+send_id,id,(kind==='opening'?'פתיחת תיק':'תזכורת')+' · '+view.email,me.staff_id)]);
+  return {sent:true,to:view.email};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
  if(path==='/api/csv/export'&&method==='POST'){adminOnly(me);const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','contact_name','reference','regular_template_id','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','period_start','period_end','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
