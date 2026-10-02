@@ -41,7 +41,7 @@ const cases = [
   ['demo-cl-01', 'דוח שנתי', ANNUAL, ['2025-01-01', '2025-12-31'], 20, 'ready_for_work', 'aa'],
   ['demo-cl-03', 'דוח שנתי', ANNUAL, ['2025-01-01', '2025-12-31'], 45, 'collecting', 'um'],
   ['demo-cl-06', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 6, 'collecting', 'mum'],
-  ['demo-cl-02', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-07-01', '2026-07-31'], -20, 'closed', 'aaa'],
+  ['demo-cl-02', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-07-01', '2026-07-31'], -20, 'archived', 'aaa'],
   ['demo-cl-10', 'דוח שנתי', ANNUAL, ['2025-01-01', '2025-12-31'], 60, 'collecting', 'mm'],
   // Added 2026-09-30: two more cases whose documents are all approved.
   ['demo-cl-04', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 4, 'ready_for_work', 'aaa'],
@@ -54,8 +54,8 @@ const out = ['-- Demo data. Fictional clients and cases. Safe to re-run.'];
 for (const [id, name, ref, biz, email, phone, tags] of clients)
   out.push(`INSERT OR IGNORE INTO clients(client_id,name,reference,business_number,email,phone,tags,notes) VALUES (${[id, name, ref, biz, email, phone, tags, 'לקוח לדוגמה'].map(q).join(',')});`);
 cases.forEach(([client, type, docs, range, due, status, states, note], i) => {
-  const id = `demo-case-${String(i + 1).padStart(2, '0')}`, done = ['ready_for_work', 'closed'].includes(status);
-  out.push(`INSERT OR IGNORE INTO cases(case_id,client_id,name,type,category,reporting_period,period_start,period_end,due_date,owner,owner_id,token_hash,link_version,status,client_completed_at,completed_at,closed_at) VALUES (${[id, client, `${type} · ${period(range)}`, type, clients.find(c => c[0] === client)[6], `${ddmm(range[0])}–${ddmm(range[1])}`, range[0], range[1], day(due)].map(q).join(',')},${ADMIN_NAME},${ADMIN},${q('unissued-' + id)},0,${q(status)},${['client_completed', 'ready_for_work', 'closed'].includes(status) ? q(day(-3) + 'T09:00:00.000Z') : 'NULL'},${done ? q(day(-1) + 'T12:00:00.000Z') : 'NULL'},${status === 'closed' ? q(day(-1) + 'T12:00:00.000Z') : 'NULL'});`);
+  const id = `demo-case-${String(i + 1).padStart(2, '0')}`, done = ['ready_for_work', 'archived'].includes(status);
+  out.push(`INSERT OR IGNORE INTO cases(case_id,client_id,name,type,category,reporting_period,period_start,period_end,due_date,owner,owner_id,token_hash,link_version,status,client_completed_at,completed_at,closed_at) VALUES (${[id, client, `${type} · ${period(range)}`, type, clients.find(c => c[0] === client)[6], `${ddmm(range[0])}–${ddmm(range[1])}`, range[0], range[1], day(due)].map(q).join(',')},${ADMIN_NAME},${ADMIN},${q('unissued-' + id)},0,${q(status)},${['client_completed', 'ready_for_work', 'archived'].includes(status) ? q(day(-3) + 'T09:00:00.000Z') : 'NULL'},${done ? q(day(-1) + 'T12:00:00.000Z') : 'NULL'},${status === 'archived' ? q(day(-1) + 'T12:00:00.000Z') : 'NULL'});`);
   docs.forEach(([doc, docName, required, max], j) => {
     const rid = `${id}-r${j + 1}`, st = { m: 'missing', u: 'uploaded', c: 'correction', a: 'approved' }[states[j]];
     out.push(`INSERT OR IGNORE INTO requirements(requirement_id,case_id,document_id,name,required,max_files,position,status,correction_message) VALUES (${[rid, id, doc, docName, required, max, j, st, st === 'correction' ? note : ''].map(q).join(',')});`);
