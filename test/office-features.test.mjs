@@ -239,3 +239,20 @@ test('the reminder names the period in words and keeps a date range in reading o
   // An old free-text period is kept as written, isolated left-to-right.
   assert.equal(await period(null, null), '\u20662026-08\u2069');
 });
+
+test('a new case has its own opening message, separate from the reminder', async () => {
+  const db = await seed(), e = env(db);
+  await call(e, '/api/settings', { method: 'POST', data: { office_name: 'משרד כהן', warning_days: 7, urgent_days: 2, whatsapp_template: 'זו תזכורת: {missing}' } });
+  db.raw.prepare("UPDATE cases SET due_date='2026-10-04' WHERE case_id='case1'").run();
+  const r = await call(e, '/api/cases/case1/opening');
+  assert.equal(r.status, 200);
+  const lines = r.body.text.split('\n');
+  assert.equal(lines[0], 'שלום Test Client,');
+  assert.equal(lines[1], 'פתחנו עבורך תיק: Monthly.');
+  assert.deepEqual(lines.slice(3, 5), ['• Bank', '• Sales']);
+  assert.match(r.body.text, /להעלאת המסמכים: https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[0-9a-f]{64}\nעד 04\/10\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.\nמשרד כהן$/);
+  // The office's reminder wording never leaks into the opening message, and opening it records no reminder.
+  assert.doesNotMatch(r.body.text, /תזכורת/);
+  const view = await call(e, '/api/cases/case1');
+  assert.equal(view.body.events.some(x => x.action === 'reminder_prepared'), false);
+});

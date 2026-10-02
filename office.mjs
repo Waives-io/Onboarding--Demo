@@ -162,12 +162,11 @@ function newCase(clientId='',keep=null,opts={}){$('#modal').oncancel=null;const 
 <label>תאריך יעד להעברת החומרים${dateInput('name="due_date"','',true)}</label>
 ${isAdmin()?`<label>אחראי על התיק<select name="owner_id">${staff.filter(p=>p.active!==0).map(p=>`<option value="${esc(p.staff_id)}" ${p.staff_id===me.staff_id?'selected':''}>${esc(p.name)}</option>`).join('')}${addOption('איש צוות חדש')}</select></label>`:`<label>אחראי על התיק<input value="${esc(me.name)}" disabled></label>`}</div>
 <h3>המסמכים שיבקשו מהלקוח</h3><p class="muted">מסמכי החובה מסומנים. מסמכים "לפי הצורך" מסמנים רק כשהם רלוונטיים ללקוח הזה.</p><div id="items"></div>
-${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="checkbox" id="save-type" checked> לשמור את המסמכים שהוספתי גם בסוג התיק, לתיקים הבאים</label>':''}
-<details id="more"><summary>אפשרויות נוספות: שם התיק וקטגוריה</summary><div class="form-grid"><label class="wide">שם התיק<input name="name" id="case-name" placeholder=""><small class="muted">ריק = שם אוטומטי לפי סוג התיק והתקופה.</small></label><label>קטגוריה<input name="category" list="category-options" placeholder="לדוגמה: עצמאי, חברה בע״מ"></label><datalist id="category-options">${categories.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div></details>
+${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="checkbox" id="save-type"> לשמור את המסמכים שהוספתי גם בסוג התיק, לתיקים הבאים</label>':''}
 <p id="form-error" class="error" role="alert"></p><button class="primary">פתיחת התיק ושליחה ללקוח</button></form>`);
  const form=$('#case-form');bindDates(form);
  // What was typed survives a detour to add a client, a case type or a staff member.
- const snapshot=()=>({fields:Object.fromEntries(new FormData(form)),client:$('#client-pick').value,template:$('#template').value,items:rowsState(),more:$('#more').open});
+ const snapshot=()=>({fields:Object.fromEntries(new FormData(form)),client:$('#client-pick').value,template:$('#template').value,items:rowsState()});
  // Cancelling the add form brings the case form back as it was. Saving brings it back with the new entry chosen.
  const detour=(open,patch)=>{const k=snapshot(),m=$('#modal'),cancel=()=>{m.oncancel=null;newCase('',k,opts);};open(id=>newCase('',{...k,...patch(id)},opts));
   $('#close-modal').onclick=cancel;m.oncancel=e=>{e.preventDefault();cancel();};};
@@ -177,13 +176,13 @@ ${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="che
  if(!keep&&!opts.template&&regular(pre))$('#template').value=regular(pre);
  const chosen=()=>templates.find(t=>t.template_id===$('#template').value);
  const autoName=()=>{const t=chosen(),p=periodLabel($('[name=period_start]').value,$('[name=period_end]').value);return [t?.name||'איסוף מסמכים',p].filter(Boolean).join(' · ');};
- const refreshName=()=>{$('#case-name').placeholder=autoName();};
+ const refreshName=()=>{};
  let datesTouched=!!keep;
  const yearly=t=>/שנתי|החזר מס|הצהרת הון/.test(t?.name||'');
  const setPeriod=()=>{if(datesTouched)return;const y=now.getFullYear()-1,t=chosen();setDate(form.elements.period_start,yearly(t)?`${y}-01-01`:iso(start));setDate(form.elements.period_end,yearly(t)?`${y}-12-31`:iso(end));};
  const syncSave=()=>{const row=$('#save-type-row');if(row)row.hidden=!(chosen()&&rowsState().some(r=>r.added));};
  const showItems=()=>{const t=chosen();setPeriod();$('#items').innerHTML=rowsEditor((t?.items||[]).map(i=>({...i,included:!!i.required})),true);bindRows(syncSave);refreshName();};
- showItems();if(keep&&!keep.freshTemplate){$('#items').innerHTML=rowsEditor(keep.items||[],true);bindRows(syncSave);$('#more').open=!!keep.more;}
+ showItems();if(keep&&!keep.freshTemplate){$('#items').innerHTML=rowsEditor(keep.items||[],true);bindRows(syncSave);}
  if(keep&&form.elements.owner_id)form.elements.owner_id.value=keep.owner||keep.fields?.owner_id||me.staff_id;
  onAdd($('#template'),()=>detour(done=>templateForm({},done),id=>({template:id,freshTemplate:true})));
  $('#client-pick').addEventListener('change',()=>{const r=regular(clients.find(x=>clientLabel(x)===$('#client-pick').value.trim()));if(r&&$('#template').value!==r){$('#template').value=r;showItems();}});
@@ -193,7 +192,7 @@ ${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="che
  $('#inline-client').onclick=()=>detour(done=>clientForm(null,done),id=>{const c=clients.find(x=>x.client_id===id);return {client:c?clientLabel(c):''};});
  bindForm('#case-form',async b=>{const client=clients.find(c=>clientLabel(c)===$('#client-pick').value.trim());if(!client)throw new Error('יש לבחור לקוח מהרשימה, או ליצור לקוח חדש.');if(b.period_start>b.period_end)throw new Error('תאריך הסיום של התקופה לפני תאריך ההתחלה.');
   b.requirements=selectedItems();if(!b.requirements.length)throw new Error('יש לסמן לפחות מסמך אחד.');if(!b.requirements.some(r=>r.required))throw new Error('לפחות מסמך אחד צריך להיות חובה.');
-  const t=chosen(),added=rowsState().filter(r=>r.added);b.client_id=client.client_id;b.name=b.name.trim()||autoName();b.type=t?.name||'אחר';
+  const t=chosen(),added=rowsState().filter(r=>r.added);b.client_id=client.client_id;b.name=autoName();b.type=t?.name||'אחר';
   const r=await call('/api/cases',b);
   // Documents added here join the case type when the admin leaves the box ticked. The case is already open either way.
   if(t&&isAdmin()&&$('#save-type')?.checked&&added.length){try{await call('/api/templates',{template_id:t.template_id,name:t.name,items:[...t.items.map(i=>({document_id:i.document_id,required:!!i.required,max_files:Number(i.max_files)||1})),...added.map(a=>({...(a.document_id?{document_id:a.document_id}:{name:a.name}),required:a.required,max_files:a.max_files}))]});toast('המסמכים החדשים נשמרו גם בסוג התיק');}catch(e){toast('התיק נפתח, אבל המסמכים לא נשמרו בסוג התיק: '+e.message);}}
@@ -204,7 +203,8 @@ ${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="che
 // and opens WhatsApp or the email draft through a real link, which browsers do not block. The contact is recorded on that click.
 async function sendDialog(caseId,fresh=false,prefer=''){
  const c=cases.find(x=>x.case_id===caseId)||await call('/api/cases/'+caseId);
- let text='',link='';try{const r=await call('/api/cases/'+caseId+'/reminder',{});text=r.text;link=r.link;}catch{}
+ // A case that just opened gets the opening message; later sends are reminders of what is still missing.
+ let text='',link='';try{const r=fresh?await call('/api/cases/'+caseId+'/opening'):await call('/api/cases/'+caseId+'/reminder',{});text=r.text;link=r.link;}catch{}
  // A case with nothing missing still gets a plain message with its link.
  if(!link){link=(await call('/api/cases/'+caseId+'/link')).link;text=`שלום ${c.contact_name||c.client_name},\nהקישור האישי לתיק ${c.name}:\n${link}`+(String(c.phone||'').replace(/\D/g,'').length>=4?'\nלכניסה: 4 הספרות האחרונות של הנייד שלך.':'');}
  const local=location.hostname==='localhost'||location.hostname==='127.0.0.1',shown=local?location.origin+'/client.html#'+link.split('#')[1]:link;if(local)text=text.split(link).join(shown);
@@ -215,7 +215,7 @@ async function sendDialog(caseId,fresh=false,prefer=''){
 <div id="send-step" hidden><label>ההודעה ללקוח<textarea id="send-text" rows="8">${esc(text)}</textarea></label><div class="actions"><a class="primary button-link" id="send-go" rel="noopener noreferrer"></a></div></div>
 <details><summary>הקישור האישי לתיק</summary><p class="link-box">${esc(shown)}</p><a href="${esc(shown)}" target="_blank" rel="noopener noreferrer">צפייה בעמוד של הלקוח ↗</a><p class="muted">הקישור הגיע למישהו אחר? אפשר לבטל אותו וליצור קישור חדש. הקישור הישן יפסיק לעבוד מיד.</p><button type="button" id="revoke-link">ביטול הקישור ויצירת קישור חדש</button></details>`);
  let channel='';const go=$('#send-go'),area=$('#send-text');
- const target=()=>channel==='whatsapp'?(()=>{const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',area.value);return u.href;})():channel==='email'?`mailto:${encodeURIComponent(mail)}?subject=${encodeURIComponent('השלמת מסמכים — '+c.name)}&body=${encodeURIComponent(area.value)}`:'#';
+ const target=()=>channel==='whatsapp'?(()=>{const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',area.value);return u.href;})():channel==='email'?`mailto:${encodeURIComponent(mail)}?subject=${encodeURIComponent((fresh?'מסמכים לתיק ':'השלמת מסמכים — ')+c.name)}&body=${encodeURIComponent(area.value)}`:'#';
  const choose=k=>{channel=k;document.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-checked',String(b.dataset.channel===k)));$('#send-step').hidden=false;
   // <bdi> keeps a phone number or an address in its own direction inside the Hebrew label.
   go.innerHTML=k==='whatsapp'?`פתיחת WhatsApp ל־<bdi dir="ltr">${esc(c.phone)}</bdi>`:k==='email'?`פתיחת הדוא״ל ל־<bdi dir="ltr">${esc(mail)}</bdi>`:'העתקת ההודעה';
