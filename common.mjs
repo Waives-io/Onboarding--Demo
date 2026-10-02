@@ -1,7 +1,7 @@
 export const $=s=>document.querySelector(s);
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Office words name the next step and who owns it. The client sees the same states from their side (clientStatus).
-export const status={collecting:'ממתין ללקוח',action_required:'נדרש תיקון',client_completed:'מוכן לבדיקה',ready_for_work:'המסמכים אושרו',closed:'סגור',archived:'בארכיון',missing:'חסר',uploaded:'מחכה לבדיקה',correction:'נדרש תיקון',approved:'אושר',pending:'ממתין לאישור שמירה',stored:'נשמר',failed:'השמירה נכשלה'};
+export const status={collecting:'ממתין ללקוח',action_required:'נדרש תיקון',client_completed:'מוכן לבדיקה',ready_for_work:'המסמכים אושרו',closed:'בארכיון',archived:'בארכיון',missing:'חסר',uploaded:'מחכה לבדיקה',correction:'נדרש תיקון',approved:'אושר',pending:'ממתין לאישור שמירה',stored:'נשמר',failed:'השמירה נכשלה'};
 export const clientStatus={...status,collecting:'מחכים למסמכים שלך',client_completed:'נשלח למשרד',ready_for_work:'אושר',uploaded:'נשלח, בבדיקה'};
 export const badge=(s,words=status)=>`<span class="badge ${['approved','ready_for_work'].includes(s)?'green':['correction','action_required'].includes(s)?'red':['uploaded','client_completed'].includes(s)?'blue':'amber'}">${esc(words[s]||s)}</span>`;
 export const date=s=>s?new Date(s).toLocaleDateString('he-IL'):'—';

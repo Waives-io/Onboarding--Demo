@@ -52,3 +52,6 @@ main,body:has(header nav) main{max-width:none;margin:0 var(--sidebar) 0 0;paddin
 .doc-chips li{padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--soft);font-size:.82rem}
 .doc-chips li.req{font-weight:800;background:#fff;border-color:#bfbdc0}
 @media(max-width:720px){.list-row{grid-template-columns:1fr auto}.doc-chips{grid-column:1/-1;grid-row:2}}
+
+/* The reminder sits under the contact line on the board. */
+#rows [data-whatsapp]{display:block;margin-top:6px;white-space:nowrap}

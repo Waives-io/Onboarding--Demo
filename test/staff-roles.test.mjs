@@ -203,3 +203,15 @@ test('a case handed to someone else mid-request stays out of the old manager\'s 
   assert.equal(db.raw.prepare("SELECT status FROM requirements WHERE requirement_id='r-case1'").get().status, 'missing');
   assert.equal(db.raw.prepare("SELECT count(*) n FROM events WHERE case_id='case1'").get().n, 0);
 });
+
+test('closing a request puts it in the archive, and it can come back', async () => {
+  const db = await office(), e = env(db);
+  for (const s of ['closed', 'archived']) {
+    assert.equal((await call(e, '/api/cases/case1/status', { method: 'POST', token: T.m1, data: { status: s } })).status, 200);
+    assert.equal(db.raw.prepare("SELECT status FROM cases WHERE case_id='case1'").get().status, 'archived');
+    assert.equal((await call(e, '/api/cases/case1/status', { method: 'POST', token: T.m1, data: { status: 'reopen' } })).status, 200);
+    assert.notEqual(db.raw.prepare("SELECT status FROM cases WHERE case_id='case1'").get().status, 'archived');
+  }
+  const details = db.raw.prepare("SELECT detail FROM events WHERE case_id='case1' AND action='case_status' ORDER BY rowid").all().map(r => r.detail);
+  assert.deepEqual(details, ['archived', 'reopen', 'archived', 'reopen']);
+});
