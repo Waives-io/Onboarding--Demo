@@ -61,6 +61,13 @@ function reminderText(s,view,link) {
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
  return {missing,text:withPinHint((s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m),view.phone)};
 }
+// The first message, when a case opens: what the office needs and the link. A reminder is a different message (reminderText).
+const ddmm=d=>ddmmyyyy(d).slice(0,5);
+function openingText(s,view,link) {
+ const lines=[`שלום ${view.contact_name||view.client_name},`,`פתחנו עבורך תיק: ${view.name}.`,'אלה המסמכים שנצטרך:',...view.requirements.filter(r=>r.required).map(r=>'• '+r.name),`להעלאת המסמכים: ${link}`];
+ if(view.due_date)lines.push(`עד ${ddmm(view.due_date)}`);
+ return withPinHint(lines.join('\n'),view.phone)+(s.office_name?'\n'+s.office_name:'');
+}
 // The office's last contact with the client about a case: when, how, and how many times.
 const contactSql=t=>`(SELECT count(*) FROM contacts WHERE case_id=${t}.case_id) contact_count,(SELECT max(created_at) FROM contacts WHERE case_id=${t}.case_id) last_contact_at,(SELECT channel FROM contacts WHERE case_id=${t}.case_id ORDER BY created_at DESC LIMIT 1) last_channel`;
 // One definition of "waiting for review" for the approve-all button, the route and its events.
@@ -374,7 +381,7 @@ async function handle(req,env) {
    requireThat(!used.has(doc),'duplicate_document',409);used.add(doc);
    statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,doc,r.required?1:0,r.max_files,i));}
   await db.batch(statements);return {template_id:id};}
- const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|reconcile|owner|contacts))?$/);
+ const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|opening|reconcile|owner|contacts))?$/);
  if(match){const id=match[1],action=match[2],c=await ownCase(db,me,id);
  // An admin may hand the case to someone else mid-request. Writes repeat the ownership check in SQL.
  const mine='EXISTS(SELECT 1 FROM cases WHERE case_id=? AND (?=1 OR owner_id=?))',mineArgs=[id,isAdmin(me)?1:0,me.staff_id];
@@ -410,6 +417,7 @@ async function handle(req,env) {
   return {...await caseView(db,id,true),approved_count:done[1].meta.changes};}
  if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),x=await settings(db),link=await portalLink(env,db,id),{missing,text}=reminderText(x,view,link);requireThat(missing.length,'nothing_missing',409);
   await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', '),actor).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
+ if(action==='opening'&&method==='GET'){const view=await caseView(db,id,true),link=await portalLink(env,db,id);return {text:openingText(await settings(db),view,link),link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'מסמכים לתיק '+view.name};}
  if(action==='reconcile'&&method==='POST'){const b=await body(req),u=await one(db,'SELECT u.* FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=? AND r.case_id=?',b.submission_id,id);requireThat(u,'not_found',404);const p=new FormData();p.set('action','lookup_submission');p.set('submission_id',u.submission_id);const receipt=await make(env,p);if(failedReceipt(receipt,u)){if(Date.parse(u.created_at)<Date.now()-LOOKUP_GRACE_MS)await markFailed(db,id,u);}else await storeReceipt(db,u,receipt);return {ok:true,state:(await one(db,'SELECT state FROM uploads WHERE submission_id=?',u.submission_id)).state};}
  }
  if(path==='/api/csv/export'&&method==='POST'){adminOnly(me);const b=await body(req);requireThat(['clients','cases'].includes(b.entity));const keys=b.entity==='clients'?['client_id','name','contact_name','reference','regular_template_id','business_number','email','phone','status','tags','notes']:['case_id','client_id','name','type','category','reporting_period','period_start','period_end','due_date','owner','status'];return {csv:toCSV(await all(db,'SELECT * FROM '+b.entity),keys)};}
