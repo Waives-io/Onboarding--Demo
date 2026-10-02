@@ -212,3 +212,30 @@ test('reminders greet the contact person and name the case', async () => {
   await call(e, '/api/settings', { method: 'POST', data: { office_name: 'x', warning_days: 7, urgent_days: 2, whatsapp_template: '{client}: {case} / {request}' } });
   assert.equal((await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text, 'דנה: Monthly / Monthly\nלכניסה: 4 הספרות האחרונות של הנייד שלך.');
 });
+
+test('progress counts received and approved documents the same way in every state', async () => {
+  const db = await seed(), e = env(db);
+  const counts = async () => { const [c] = (await call(e, '/api/cases')).body; const v = (await call(e, '/api/cases/case1')).body; assert.deepEqual([v.docs_received, v.docs_approved, v.docs_total], [c.docs_received, c.docs_approved, c.docs_total]); return [c.docs_received, c.docs_approved, c.docs_total]; };
+  // The untouched optional document does not count.
+  assert.deepEqual(await counts(), [0, 0, 2]);
+  db.raw.prepare("UPDATE requirements SET status='uploaded' WHERE requirement_id IN ('r1','r2')").run();
+  assert.deepEqual(await counts(), [2, 0, 2]);
+  // An optional document the client sent joins the count; an approved one is both received and approved.
+  db.raw.prepare("UPDATE requirements SET status='uploaded' WHERE requirement_id='r3'").run();
+  db.raw.prepare("UPDATE requirements SET status='approved' WHERE requirement_id='r1'").run();
+  assert.deepEqual(await counts(), [3, 1, 3]);
+  // A correction is not received until the fixed file comes in.
+  db.raw.prepare("UPDATE requirements SET status='correction' WHERE requirement_id='r2'").run();
+  assert.deepEqual(await counts(), [2, 1, 3]);
+});
+
+test('the reminder names the period in words and keeps a date range in reading order', async () => {
+  const db = await seed(), e = env(db);
+  await call(e, '/api/settings', { method: 'POST', data: { office_name: 'X', warning_days: 7, urgent_days: 2, whatsapp_template: '{period}' } });
+  const period = async (a, b) => { db.raw.prepare('UPDATE cases SET period_start=?,period_end=? WHERE case_id=?').run(a, b, 'case1'); return (await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text.split('\n')[0]; };
+  assert.equal(await period('2025-01-01', '2025-12-31'), '2025');
+  assert.equal(await period('2026-08-01', '2026-08-31'), 'אוגוסט 2026');
+  assert.equal(await period('2026-01-15', '2026-02-10'), '\u206615/01/2026–10/02/2026\u2069');
+  // An old free-text period is kept as written, isolated left-to-right.
+  assert.equal(await period(null, null), '\u20662026-08\u2069');
+});

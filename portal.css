@@ -34,7 +34,7 @@
 .consent input{width:20px;height:20px;margin:3px 0 0;flex:none;accent-color:var(--green)}
 .field-error{display:block;min-height:1.2em;color:#a12b1b;font-size:.85rem;font-weight:600}
 .hint-fix{padding:0;border:0;background:none;color:var(--green);font-weight:700;text-decoration:underline;cursor:pointer;min-height:0}
-.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.hp{position:absolute;inset-inline-start:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;clip-path:inset(50%)}
 .landing-steps{margin:0;padding-inline-start:20px}
 .landing-steps li{margin:4px 0}
 @media(max-width:520px){.need-options{grid-template-columns:1fr}}
