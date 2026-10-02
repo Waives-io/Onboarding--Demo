@@ -197,7 +197,22 @@ ${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="che
   // Documents added here join the case type when the admin leaves the box ticked. The case is already open either way.
   if(t&&isAdmin()&&$('#save-type')?.checked&&added.length){try{await call('/api/templates',{template_id:t.template_id,name:t.name,items:[...t.items.map(i=>({document_id:i.document_id,required:!!i.required,max_files:Number(i.max_files)||1})),...added.map(a=>({...(a.document_id?{document_id:a.document_id}:{name:a.name}),required:a.required,max_files:a.max_files}))]});toast('המסמכים החדשים נשמרו גם בסוג התיק');}catch(e){toast('התיק נפתח, אבל המסמכים לא נשמרו בסוג התיק: '+e.message);}}
   if(opts.inquiry)await call('/api/inquiries/'+opts.inquiry,{status:'handled',client_id:client.client_id}).catch(()=>{});
-  $('#modal').close();await load();await showCase(r.case_id);sendDialog(r.case_id,true).catch(e=>toast(e.message));});}
+  $('#modal').close();await load();await showCase(r.case_id);openedDialog(r.case_id).catch(e=>toast(e.message));});}
+
+// Right after a case opens, the opening message goes to the client by email at once. WhatsApp stays one tap away.
+// If the client has no email or the email fails, the office gets the regular send window instead.
+const localLink=(text,link)=>{const local=location.hostname==='localhost'||location.hostname==='127.0.0.1';return local?text.split(link).join(location.origin+'/client.html#'+link.split('#')[1]):text;};
+async function openedDialog(caseId){const c=cases.find(x=>x.case_id===caseId)||await call('/api/cases/'+caseId),person=clients.find(x=>x.client_id===c.client_id)?.contact_name||c.client_name;
+ if(!c.email)return sendDialog(caseId,true);
+ dialog('התיק נפתח',`<p role="status" id="opened-status">שולחים ל${esc(person)} מייל עם הקישור…</p><div class="actions" id="opened-actions"></div>`);
+ try{await call('/api/cases/'+caseId+'/email',{kind:'opening'});}catch(e){if($('#opened-status')){toast(e.message);sendDialog(caseId,true,'whatsapp').catch(err=>toast(err.message));}return;}
+ if(!$('#opened-status'))return;
+ $('#opened-status').innerHTML=`נשלח מייל ל${esc(person)} (<bdi dir="ltr">${esc(c.email)}</bdi>) עם הקישור ורשימת המסמכים.`;
+ const wa=/^\d{11,15}$/.test(c.whatsapp||'')?c.whatsapp:'',r=wa?await call('/api/cases/'+caseId+'/opening').catch(()=>null):null;
+ $('#opened-actions').innerHTML=(r?'<a class="button-link" id="also-wa" target="_blank" rel="noopener noreferrer">גם ב־WhatsApp</a>':'')+'<button type="button" class="primary" id="opened-done">סגירה</button>';
+ if(r){const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',localLink(r.text,r.link));$('#also-wa').href=u.href;$('#also-wa').onclick=()=>{recordContact(caseId,'whatsapp');toast('WhatsApp נפתח. שולחים את ההודעה משם.');};}
+ $('#opened-done').onclick=()=>$('#modal').close();
+ cases=await call('/api/cases');if(!$('#modal').open||$('#opened-status'))showCase(caseId).catch(()=>{});}
 
 // Sending: the office picks a channel (each card shows the phone or email it goes to), checks or edits the message,
 // and opens WhatsApp or the email draft through a real link, which browsers do not block. The contact is recorded on that click.
@@ -210,19 +225,23 @@ async function sendDialog(caseId,fresh=false,prefer=''){
  const local=location.hostname==='localhost'||location.hostname==='127.0.0.1',shown=local?location.origin+'/client.html#'+link.split('#')[1]:link;if(local)text=text.split(link).join(shown);
  const wa=/^\d{11,15}$/.test(c.whatsapp||'')?c.whatsapp:'',mail=c.email||'';
  const cards=[['whatsapp','WhatsApp',wa?c.phone:'',wa?'':'אין ללקוח נייד תקין'],['email','דוא״ל',mail,mail?'':'אין ללקוח כתובת דוא״ל'],['copy','העתקת ההודעה','להדבקה בכל מקום','']];
- dialog(fresh?'התיק נפתח. שולחים ללקוח את הקישור':'שליחה ללקוח',`<p class="muted">בוחרים איך לשלוח. ההודעה נפתחת מוכנה, והשליחה עצמה נעשית מתוך WhatsApp או מתיבת הדוא״ל.</p>
+ dialog(fresh?'התיק נפתח. שולחים ללקוח את הקישור':'שליחה ללקוח',`<p class="muted">מייל יוצא מכאן מיד. WhatsApp נפתח עם ההודעה מוכנה, ושולחים משם.</p>
 <div class="channel-cards" role="radiogroup" aria-label="איך לשלוח">${cards.map(([k,label,to,why])=>`<button type="button" role="radio" aria-checked="false" data-channel="${k}" ${why?'disabled':''}><strong>${label}</strong><small>${why?esc(why):`<bdi dir="ltr">${esc(to)}</bdi>`}</small></button>`).join('')}</div>
 <div id="send-step" hidden><label>ההודעה ללקוח<textarea id="send-text" rows="8">${esc(text)}</textarea></label><div class="actions"><a class="primary button-link" id="send-go" rel="noopener noreferrer"></a></div></div>
 <details><summary>הקישור האישי לתיק</summary><p class="link-box">${esc(shown)}</p><a href="${esc(shown)}" target="_blank" rel="noopener noreferrer">צפייה בעמוד של הלקוח ↗</a><p class="muted">הקישור הגיע למישהו אחר? אפשר לבטל אותו וליצור קישור חדש. הקישור הישן יפסיק לעבוד מיד.</p><button type="button" id="revoke-link">ביטול הקישור ויצירת קישור חדש</button></details>`);
  let channel='';const go=$('#send-go'),area=$('#send-text');
- const target=()=>channel==='whatsapp'?(()=>{const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',area.value);return u.href;})():channel==='email'?`mailto:${encodeURIComponent(mail)}?subject=${encodeURIComponent((fresh?'מסמכים לתיק ':'השלמת מסמכים — ')+c.name)}&body=${encodeURIComponent(area.value)}`:'#';
+ const target=()=>channel==='whatsapp'?(()=>{const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',area.value);return u.href;})():'#';
  const choose=k=>{channel=k;document.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-checked',String(b.dataset.channel===k)));$('#send-step').hidden=false;
   // <bdi> keeps a phone number or an address in its own direction inside the Hebrew label.
-  go.innerHTML=k==='whatsapp'?`פתיחת WhatsApp ל־<bdi dir="ltr">${esc(c.phone)}</bdi>`:k==='email'?`פתיחת הדוא״ל ל־<bdi dir="ltr">${esc(mail)}</bdi>`:'העתקת ההודעה';
+  go.innerHTML=k==='whatsapp'?`פתיחת WhatsApp ל־<bdi dir="ltr">${esc(c.phone)}</bdi>`:k==='email'?`שליחת המייל ל־<bdi dir="ltr">${esc(mail)}</bdi>`:'העתקת ההודעה';
+  // The email text is the system's own message, so it is shown as it will go out.
+  area.readOnly=k==='email';
   if(k==='whatsapp')go.target='_blank';else go.removeAttribute('target');go.href=target();};
  area.oninput=()=>{if(channel)go.href=target();};
  document.querySelectorAll('[data-channel]').forEach(b=>b.onclick=()=>choose(b.dataset.channel));
- go.onclick=async e=>{if(channel==='copy'){e.preventDefault();try{await navigator.clipboard.writeText(area.value);}catch{toast('לא ניתן להעתיק. אפשר לסמן את ההודעה ולהעתיק ידנית.');return;}toast('ההודעה הועתקה');}
+ go.onclick=async e=>{if(channel==='email'){e.preventDefault();if(go.getAttribute('aria-disabled')==='true')return;go.setAttribute('aria-disabled','true');go.textContent='שולח…';
+   try{await call('/api/cases/'+caseId+'/email',{kind:fresh?'opening':'reminder'});toast('המייל נשלח ל־'+mail);$('#modal').close();cases=await call('/api/cases');if(view==='cases'&&$('#rows'))render();}catch(err){toast(err.message);go.removeAttribute('aria-disabled');choose('email');}return;}
+  if(channel==='copy'){e.preventDefault();try{await navigator.clipboard.writeText(area.value);}catch{toast('לא ניתן להעתיק. אפשר לסמן את ההודעה ולהעתיק ידנית.');return;}toast('ההודעה הועתקה');}
   else toast(channel==='whatsapp'?'WhatsApp נפתח. שולחים את ההודעה משם.':'טיוטת הדוא״ל נפתחה. שולחים אותה משם.');
   recordContact(caseId,channel);};
  const first=[prefer,'whatsapp','email','copy'].find(k=>k&&!document.querySelector(`[data-channel="${k}"]`)?.disabled);if(first)choose(first);
@@ -231,7 +250,7 @@ function linkDialog(link,caseId,fresh=false){return sendDialog(caseId,fresh);}
 
 const openLink=id=>sendDialog(id).catch(e=>toast(e.message));
 
-const events={case_created:'התיק נפתח',upload_stored:'מסמך נשמר',upload_stored_late:'מסמך נשמר באיחור',upload_failed:'שמירת מסמך נכשלה',client_completed:'הלקוח סיים לשלוח',approved:'מסמך אושר',correction:'התבקש תיקון',reminder_prepared:'הוכנה תזכורת',case_status:'סטטוס התיק השתנה',link_revoked:'הקישור האישי הוחלף',owner_changed:'האחראי על התיק הוחלף',client_unavailable:'הלקוח ציין שאין לו מסמך',client_unavailable_undone:'הלקוח ביטל את "אין לי"',contact:'פנייה ללקוח'};
+const events={case_created:'התיק נפתח',upload_stored:'מסמך נשמר',upload_stored_late:'מסמך נשמר באיחור',upload_failed:'שמירת מסמך נכשלה',client_completed:'הלקוח סיים לשלוח',approved:'מסמך אושר',correction:'התבקש תיקון',reminder_prepared:'הוכנה תזכורת',case_status:'סטטוס התיק השתנה',link_revoked:'הקישור האישי הוחלף',owner_changed:'האחראי על התיק הוחלף',client_unavailable:'הלקוח ציין שאין לו מסמך',client_unavailable_undone:'הלקוח ביטל את "אין לי"',contact:'פנייה ללקוח',email_sent:'נשלח מייל ללקוח'};
 // The client said they do not have this document. The office approves the absence or asks for it anyway.
 const noFile=r=>r.status==='missing'&&r.unavailable_note!=null;
 // A document waiting for a decision comes first. Approved documents fold away so the page shows what is left to do.

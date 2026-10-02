@@ -256,3 +256,37 @@ test('a new case has its own opening message, separate from the reminder', async
   const view = await call(e, '/api/cases/case1');
   assert.equal(view.body.events.some(x => x.action === 'reminder_prepared'), false);
 });
+
+test('opening and reminder emails go through Make and are recorded only when Make confirms', async t => {
+  const db = await seed(), e = { ...env(db), MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test', MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_BRIDGE_ENABLED: 'true' };
+  db.raw.prepare("UPDATE clients SET email='dana@example.com',contact_name='דנה' WHERE client_id='cl1'").run();
+  await call(e, '/api/settings', { method: 'POST', data: { office_name: 'משרד כהן', email: 'office@example.com', warning_days: 7, urgent_days: 2 } });
+  let sent = [], reply = form => ({ status: 'sent', send_id: form.get('send_id') });
+  t.mock.method(globalThis, 'fetch', async (url, init) => { const form = init.body; sent.push(Object.fromEntries(form)); return new Response(JSON.stringify(reply(form)), { headers: { 'content-type': 'application/json' } }); });
+  const r = await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening' } });
+  assert.deepEqual(r.body, { sent: true, to: 'dana@example.com' });
+  const [m] = sent;
+  assert.equal(m.action, 'send_email'); assert.equal(m.bridge_key, 'k'.repeat(32)); assert.equal(m.to, 'dana@example.com'); assert.equal(m.reply_to, 'office@example.com');
+  assert.equal(m.subject, 'מסמכים לתיק Monthly · משרד כהן');
+  assert.match(m.html, /^<div dir="rtl"/); assert.match(m.html, /שלום דנה,<br>פתחנו עבורך תיק: Monthly\./); assert.match(m.html, /href="https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[0-9a-f]{64}"/);
+  let view = (await call(e, '/api/cases/case1')).body;
+  assert.equal(view.contact_count, 1); assert.equal(view.last_channel, 'email');
+  assert.equal(view.events.find(x => x.action === 'email_sent').detail, 'פתיחת תיק · dana@example.com');
+  // A reminder email names only what is missing.
+  await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'reminder' } });
+  assert.equal(sent[1].subject, 'תזכורת: מסמכים לתיק Monthly · משרד כהן'); assert.match(sent[1].html, /• Bank/);
+  // Make answers without a confirmation (an error in Gmail): nothing is recorded and the office is told.
+  reply = () => ({ status: 'accepted' });
+  const bad = await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening' } });
+  assert.deepEqual([bad.status, bad.body.error], [502, 'email_failed']);
+  view = (await call(e, '/api/cases/case1')).body;
+  assert.equal(view.contact_count, 2);
+  // Content from the client's record is escaped in the email.
+  db.raw.prepare("UPDATE clients SET contact_name='<b>x</b>' WHERE client_id='cl1'").run(); reply = form => ({ status: 'sent', send_id: form.get('send_id') });
+  await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening' } });
+  assert.match(sent.at(-1).html, /שלום &lt;b&gt;x&lt;\/b&gt;,/);
+  // No email address: refused before anything is sent.
+  db.raw.prepare("UPDATE clients SET email='' WHERE client_id='cl1'").run(); const before = sent.length;
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening' } })).body.error, 'invalid_email');
+  assert.equal(sent.length, before);
+});
