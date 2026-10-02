@@ -242,6 +242,8 @@ async function handle(req,env) {
  const b=await body(req),r=await one(db,'SELECT * FROM requirements WHERE requirement_id=? AND case_id=?',b.requirement_id,c.case_id);requireThat(r,'not_found',404);
  requireThat(r.status==='missing','not_missing',409);
  const undo=b.undo===true,note=undo?null:clean(b.note??'',500),who={type:'client',id:c.client_id};
+ // A required document the client does not have needs a reason, so the office can decide what to do.
+ requireThat(undo||note.length>=2,'reason_required');
  await db.batch([
   stmt(db,"UPDATE requirements SET unavailable_note=?,unavailable_at=? WHERE requirement_id=? AND status='missing'",note,undo?null:now(),r.requirement_id),
   syncCase(db,c.case_id),
