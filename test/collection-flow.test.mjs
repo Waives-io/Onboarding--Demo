@@ -94,7 +94,7 @@ test('"I do not have this document" counts as answered and the office decides', 
 
 test('the office can ask for the document anyway, and the answer is cleared', async () => {
   const db = await seed(), e = env(db);
-  await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2', note: '' } });
+  await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2', note: 'אין לי מעסיק' } });
   const r = await call(e, '/api/cases/case1/review', { method: 'POST', data: { requirement_id: 'r2', status: 'correction', message: 'בכל זאת צריך' } });
   assert.equal(r.status, 200);
   const req = db.raw.prepare("SELECT status,unavailable_note FROM requirements WHERE requirement_id='r2'").get();
@@ -105,7 +105,10 @@ test('the office can ask for the document anyway, and the answer is cleared', as
 test('the client can take the answer back, and only a missing document can be marked', async () => {
   const db = await seed(), e = env(db);
   db.raw.prepare("UPDATE requirements SET status='uploaded' WHERE requirement_id='r1'").run();
-  await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2' } });
+  // A required document needs a reason.
+  assert.equal((await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2' } })).body.error, 'reason_required');
+  assert.equal((await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2', note: ' ' } })).body.error, 'reason_required');
+  await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2', note: 'לא עבדתי השנה' } });
   assert.equal(caseStatus(db), 'client_completed');
   await client(e, '/api/portal/unavailable', { method: 'POST', data: { requirement_id: 'r2', undo: true } });
   assert.equal(caseStatus(db), 'collecting');

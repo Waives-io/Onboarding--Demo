@@ -40,3 +40,32 @@
 @media(max-width:520px){.need-options{grid-template-columns:1fr}}
 .inquiry-note{margin:6px 0 0;color:var(--muted);font-size:.9rem}
 @media(max-width:720px){.table-wrap td:nth-child(5){width:auto}.table-wrap td:first-child{padding-left:120px}}
+
+/* Client page: two lists. What is left to send on top, what was sent below in green. One row per document. */
+.client-head{margin:6px 0 18px}.client-head h1{margin:2px 0 4px;font-size:clamp(1.6rem,6vw,2.2rem)}.client-head p{margin:0}
+.doc-group{margin:0 0 22px}.doc-group h2{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:1.05rem}
+.doc-group .count{min-width:26px;padding:1px 8px;border-radius:999px;background:var(--soft);font-size:.8rem;text-align:center}
+.doc-group.sent .count{background:var(--mint);color:var(--dark)}
+.doc-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.doc-item{padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:#fff}
+.doc-item.done{border-color:#bad8c7;background:var(--mint)}.doc-item.done strong span{color:var(--green)}
+.doc-item.fix{border-color:#f1b9ad;background:#fff6f4}
+.doc-line{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.doc-line strong{font-size:1rem}
+.doc-item p{margin:6px 0 0}.doc-item .files{font-size:.84rem;overflow-wrap:anywhere}
+.fix-note{padding:8px 10px;border-radius:10px;background:var(--red);color:#7a2617}
+.pick-buttons{display:flex;gap:8px;margin-top:12px}
+.pick{flex:1;min-height:48px;display:flex;align-items:center;justify-content:center;padding:8px 12px;border:1px solid #c9c8cb;border-radius:12px;background:#fff;font-weight:800;cursor:pointer}
+.pick.primary-pick{border:2px solid #000;background:var(--green);color:#fff}
+.pick:focus-within{outline:3px solid var(--dark);outline-offset:2px}
+.text-button.small{min-height:44px;padding:4px 0;font-size:.86rem}
+.sending-line{padding:8px 10px;border-radius:10px;background:var(--soft);font-weight:700}
+.note-field,.missing-form{display:grid;gap:6px;margin-top:10px}
+.more-files{margin-top:8px}.more-files>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:700;color:var(--dark)}
+.done-state{display:grid;justify-items:center;gap:6px;margin:0 0 20px;padding:22px;border-radius:18px;text-align:center}
+.done-state h2{margin:0}.done-state p{margin:0}
+.done-state .completion-tick{position:static;width:54px;height:54px;display:grid;place-items:center;border:3px solid #000;border-radius:50%;background:#fff;font-size:26px;font-weight:900}
+.pin-boxes{display:flex;justify-content:center;gap:10px;margin:18px 0 6px}
+.pin-box{width:56px;height:64px;padding:0;border:2px solid #c9c8cb;border-radius:14px;font-size:1.8rem;font-weight:800;text-align:center}
+.pin-box:focus{border-color:var(--dark);outline:none}
+.doc-item .text-button.small{display:inline-flex;align-items:center;margin-inline-end:20px}
+.doc-item .upload-status:empty{display:none}
