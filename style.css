@@ -336,3 +336,15 @@ label:has(> input[required]:not([type=checkbox]):not([type=radio]), > textarea[r
 label:has(> input[required]:not([type=checkbox]):not([type=radio]), > textarea[required], > select[required], > .date-field input[required])::before { content: '*'; position: absolute; top: -3px; right: -10px; color: var(--pink); font-weight: 800; }
 /* Before signing in there is nowhere to go: the menu waits. */
 body:has(.panel.login) .office-shell nav { display: none; }
+
+/* Home: the page has no sidebar, so its column is centred. The benefits are four plain cards, two per row. */
+body:not(:has(.office-shell)) main.client-page { margin-inline: auto; }
+.home-actions { gap: 12px; margin-top: 24px; }
+.home-actions .primary { min-width: 220px; justify-content: center; text-align: center; }
+.benefits { margin: 8px 0 40px; }
+.benefits h2 { margin: 0 0 16px; font-size: clamp(1.5rem, 4vw, 2rem); }
+.benefit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.benefit { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+.benefit h3 { margin: 0 0 8px; color: var(--text); font-size: 1.15rem; font-weight: 800; }
+.benefit p { margin: 0; color: var(--muted); line-height: 1.6; }
+@media (max-width: 720px) { .benefit-grid { grid-template-columns: 1fr; } .home-actions .primary { width: 100%; } }
