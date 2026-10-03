@@ -175,7 +175,7 @@ const MONTH_NAMES=['ינואר','פברואר','מרץ','אפריל','מאי','�
 function periodChoices(t){const now=new Date(),y=now.getFullYear();
  if(yearly(t))return [y-1,y-2,y-3,y].map(v=>({value:`${v}-01-01|${v}-12-31`,label:String(v)}));
  return Array.from({length:13},(_,i)=>{const s=new Date(Date.UTC(y,now.getMonth()-1-i,1)),e=new Date(Date.UTC(y,now.getMonth()-i,0));return {value:`${iso(s)}|${iso(e)}`,label:`${MONTH_NAMES[s.getUTCMonth()]} ${s.getUTCFullYear()}`};});}
-const docsOf=t=>(t?.items||[]).map(i=>({document_id:i.document_id,name:i.name,max_files:Number(i.max_files)||1,on:!!i.required}));
+const docsOf=t=>(t?.items||[]).map(i=>({document_id:i.document_id,name:i.name,max_files:Number(i.max_files)||1,required:!!i.required,on:!!i.required}));
 function newCase(clientId='',keep=null,opts={}){$('#modal').oncancel=null;
  const regular=x=>x?.regular_template_id&&templates.some(t=>t.template_id===x.regular_template_id)?x.regular_template_id:null;
  const pre=clients.find(c=>c.client_id===clientId),due=new Date();due.setDate(due.getDate()+14);
@@ -203,7 +203,7 @@ ${isAdmin()&&chosen()&&k.items.some(i=>i.added&&i.on)?`<label class="save-type">
  document.querySelectorAll('[data-type]').forEach(b=>b.onclick=()=>{read();k.template=b.dataset.type;k.typeTouched=true;k.items=docsOf(chosen());k.period='';redraw();});
  document.querySelectorAll('[data-doc]').forEach(b=>b.onclick=()=>{read();const i=k.items[+b.dataset.doc];if(i.added&&i.on)k.items.splice(+b.dataset.doc,1);else i.on=!i.on;redraw();$(`[data-doc]`)?.focus();});
  const addDoc=()=>{const input=$('#doc-search'),name=input.value.trim();if(!name)return;read();const have=k.items.find(i=>i.name.trim().toLowerCase()===name.toLowerCase());
-  if(have)have.on=true;else{const doc=catalog.find(c=>c.active&&c.name.trim().toLowerCase()===name.toLowerCase());k.items.push({document_id:doc?.document_id,name:doc?.name||name,max_files:20,on:true,added:true});}redraw();$('#doc-search')?.focus();};
+  if(have)have.on=true;else{const doc=catalog.find(c=>c.active&&c.name.trim().toLowerCase()===name.toLowerCase());k.items.push({document_id:doc?.document_id,name:doc?.name||name,max_files:20,required:true,on:true,added:true});}redraw();$('#doc-search')?.focus();};
  $('#doc-search').oninput=e=>{if(!e.inputType||e.inputType==='insertReplacementText')addDoc();};
  $('#doc-search').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();addDoc();}};
  // Choosing a client brings their regular case type, unless the office already picked one.
@@ -216,12 +216,12 @@ ${isAdmin()&&chosen()&&k.items.some(i=>i.added&&i.on)?`<label class="save-type">
   if(!/^\d{4}-\d{2}-\d{2}$/.test(k.due))throw new Error('תאריך היעד אינו תקין.');
   const t=chosen(),[period_start,period_end]=k.period.split('|');
   const r=await call('/api/cases',{client_id:client.client_id,name:[t?.name||'איסוף מסמכים',periodLabel(period_start,period_end)].filter(Boolean).join(' · '),type:t?.name||'אחר',period_start,period_end,due_date:k.due,
-   requirements:items.map(i=>({...(i.document_id?{document_id:i.document_id}:{}),name:i.name,required:true,max_files:i.max_files}))});
+   requirements:items.map(i=>({...(i.document_id?{document_id:i.document_id}:{}),name:i.name,required:i.required!==false,max_files:i.max_files}))});
   // Documents added here join the case type when the admin ticks the box. The case is already open either way.
   const added=items.filter(i=>i.added);
   if(t&&isAdmin()&&k.saveType&&added.length){try{await call('/api/templates',{template_id:t.template_id,name:t.name,items:[...t.items.map(i=>({document_id:i.document_id,required:!!i.required,max_files:Number(i.max_files)||1})),...added.map(a=>({...(a.document_id?{document_id:a.document_id}:{name:a.name}),required:true,max_files:1}))]});toast('המסמכים החדשים נשמרו גם בסוג התיק');}catch(e){toast('התיק נפתח, אבל המסמכים לא נשמרו בסוג התיק: '+e.message);}}
   if(opts.inquiry)await call('/api/inquiries/'+opts.inquiry,{status:'handled',client_id:client.client_id}).catch(()=>{});
-  $('#modal').close();await load();await showCase(r.case_id);openedDialog(r.case_id).catch(e=>toast(e.message));});}
+  $('#modal').close();try{await load();await showCase(r.case_id);}catch(e){toast('התיק נפתח, אבל הרענון נכשל: '+e.message);}openedDialog(r.case_id).catch(e=>toast(e.message));});}
 
 // Right after a case opens, the opening message goes to the client by email at once. WhatsApp stays one tap away.
 // If the client has no email or the email fails, the office gets the regular send window instead.
@@ -229,7 +229,7 @@ const localLink=(text,link)=>{const local=location.hostname==='localhost'||locat
 async function openedDialog(caseId){const c=cases.find(x=>x.case_id===caseId)||await call('/api/cases/'+caseId),person=clients.find(x=>x.client_id===c.client_id)?.contact_name||c.client_name;
  if(!c.email)return sendDialog(caseId,true);
  dialog('התיק נפתח',`<p role="status" id="opened-status">שולחים ל${esc(person)} מייל עם הקישור…</p><div class="actions" id="opened-actions"></div>`);
- try{await call('/api/cases/'+caseId+'/email',{kind:'opening'});}catch(e){if($('#opened-status')){toast(e.message);sendDialog(caseId,true,'whatsapp').catch(err=>toast(err.message));}return;}
+ try{await call('/api/cases/'+caseId+'/email',{kind:'opening',send_id:crypto.randomUUID()});}catch(e){if($('#opened-status')){toast(e.message);sendDialog(caseId,true,'whatsapp').catch(err=>toast(err.message));}return;}
  if(!$('#opened-status'))return;
  $('#opened-status').innerHTML=`נשלח מייל ל${esc(person)} (<bdi dir="ltr">${esc(c.email)}</bdi>) עם הקישור ורשימת המסמכים.`;
  const wa=/^\d{11,15}$/.test(c.whatsapp||'')?c.whatsapp:'',r=wa?await call('/api/cases/'+caseId+'/opening').catch(()=>null):null;
@@ -253,7 +253,7 @@ async function sendDialog(caseId,fresh=false,prefer=''){
 <div class="channel-cards" role="radiogroup" aria-label="איך לשלוח">${cards.map(([k,label,to,why])=>`<button type="button" role="radio" aria-checked="false" data-channel="${k}" ${why?'disabled':''}><strong>${label}</strong><small>${why?esc(why):`<bdi dir="ltr">${esc(to)}</bdi>`}</small></button>`).join('')}</div>
 <div id="send-step" hidden><label>ההודעה ללקוח<textarea id="send-text" rows="8">${esc(text)}</textarea></label><div class="actions"><a class="primary button-link" id="send-go" rel="noopener noreferrer"></a></div></div>
 <p class="muted"><a href="${esc(shown)}" target="_blank" rel="noopener noreferrer">צפייה בעמוד של הלקוח ↗</a></p>`);
- let channel='';const go=$('#send-go'),area=$('#send-text');
+ let channel='';const go=$('#send-go'),area=$('#send-text'),emailId=crypto.randomUUID();
  const target=()=>channel==='whatsapp'?(()=>{const u=new URL('https://wa.me/'+wa);u.searchParams.set('text',area.value);return u.href;})():'#';
  const choose=k=>{channel=k;document.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-checked',String(b.dataset.channel===k)));$('#send-step').hidden=false;
   // <bdi> keeps a phone number or an address in its own direction inside the Hebrew label.
@@ -264,7 +264,7 @@ async function sendDialog(caseId,fresh=false,prefer=''){
  area.oninput=()=>{if(channel)go.href=target();};
  document.querySelectorAll('[data-channel]').forEach(b=>b.onclick=()=>choose(b.dataset.channel));
  go.onclick=async e=>{if(channel==='email'){e.preventDefault();if(go.getAttribute('aria-disabled')==='true')return;go.setAttribute('aria-disabled','true');go.textContent='שולח…';
-   try{await call('/api/cases/'+caseId+'/email',{kind:fresh?'opening':'reminder'});toast('המייל נשלח ל־'+mail);$('#modal').close();cases=await call('/api/cases');if(view==='cases'&&$('#rows'))render();}catch(err){toast(err.message);go.removeAttribute('aria-disabled');choose('email');}return;}
+   try{await call('/api/cases/'+caseId+'/email',{kind:fresh?'opening':'reminder',send_id:emailId});toast('המייל נשלח ל־'+mail);$('#modal').close();cases=await call('/api/cases');if(view==='cases'&&$('#rows'))render();}catch(err){toast(err.message);go.removeAttribute('aria-disabled');choose('email');}return;}
   if(channel==='copy'){e.preventDefault();try{await navigator.clipboard.writeText(area.value);}catch{toast('לא ניתן להעתיק. אפשר לסמן את ההודעה ולהעתיק ידנית.');return;}toast('ההודעה הועתקה');}
   else toast(channel==='whatsapp'?'WhatsApp נפתח. שולחים את ההודעה משם.':'טיוטת הדוא״ל נפתחה. שולחים אותה משם.');
   recordContact(caseId,channel);};

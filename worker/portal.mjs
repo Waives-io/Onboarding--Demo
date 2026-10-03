@@ -58,7 +58,7 @@ const portalLink=async(env,db,id)=>{const version=async()=>(await one(db,'SELECT
  if(await version()===0)await stmt(db,'UPDATE cases SET link_version=1,token_hash=? WHERE case_id=? AND link_version=0',await hash(await caseLinkToken(id,1,env.PORTAL_LINK_KEY)),id).run();
  await version();
  // Two first requests may race; the guard keeps the code that won.
- await stmt(db,'UPDATE cases SET short_code=? WHERE case_id=? AND short_code IS NULL',shortCode(),id).run();
+ for(let i=0;i<5;i++){try{await stmt(db,'UPDATE cases SET short_code=? WHERE case_id=? AND short_code IS NULL',shortCode(),id).run();break;}catch(e){if(i===4)throw e;}}
  return SITE+'client.html#'+(await one(db,'SELECT short_code FROM cases WHERE case_id=?',id)).short_code;};
 const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
 function reminderText(s,view,link) {
@@ -245,7 +245,7 @@ async function handle(req,env) {
  if(path.startsWith('/api/portal')) {
  const c=await portal(req,db);
  if(path==='/api/portal'&&method==='GET'){if(['closed','archived'].includes(c.status))return {closed:true,status:c.status,name:c.name,client_name:c.client_name,contact_name:c.contact_name,requirements:[]};await expirePending(db,c.case_id);
-  await stmt(db,"INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,'client_opened','','client',? WHERE NOT EXISTS(SELECT 1 FROM events WHERE case_id=? AND action='client_opened' AND created_at>?)",uid(),c.case_id,c.client_id,c.case_id,new Date(Date.now()-21600000).toISOString()).run();
+  await stmt(db,"INSERT OR IGNORE INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES (?,?,'client_opened','','client',?)",'opened-'+c.case_id+'-'+Math.floor(Date.now()/21600000),c.case_id,c.client_id).run();
   return caseView(db,c.case_id);}
  active(c);
  if(path==='/api/portal/complete'&&method==='POST') {
@@ -413,7 +413,8 @@ async function handle(req,env) {
  if(action==='link'&&method==='GET')return {link:await portalLink(env,db,id)};
  // A leaked link is revoked by moving the case to a new link version. The old token stops matching token_hash.
  if(action==='revoke-link'&&method==='POST'){const v=c.link_version+1,t=await caseLinkToken(id,v,env.PORTAL_LINK_KEY);
-  const code=shortCode(),done=await db.batch([stmt(db,`UPDATE cases SET link_version=?,token_hash=?,short_code=? WHERE case_id=? AND link_version=? AND ${mine}`,v,await hash(t),code,id,c.link_version,...mineArgs),stmt(db,`INSERT INTO events(event_id,case_id,action,actor_type,actor_id) SELECT ?,?,'link_revoked','staff',? WHERE EXISTS(SELECT 1 FROM cases WHERE case_id=? AND link_version=?)`,uid(),id,me.staff_id,id,v)]);
+  let code=shortCode();for(let i=0;i<5&&await one(db,'SELECT 1 FROM cases WHERE short_code=?',code);i++)code=shortCode();
+  const done=await db.batch([stmt(db,`UPDATE cases SET link_version=?,token_hash=?,short_code=? WHERE case_id=? AND link_version=? AND ${mine}`,v,await hash(t),code,id,c.link_version,...mineArgs),stmt(db,`INSERT INTO events(event_id,case_id,action,actor_type,actor_id) SELECT ?,?,'link_revoked','staff',? WHERE EXISTS(SELECT 1 FROM cases WHERE case_id=? AND link_version=?)`,uid(),id,me.staff_id,id,v)]);
   requireThat(done[0].meta.changes===1,'conflict',409);return {link:SITE+'client.html#'+code};}
  if(action==='status'&&method==='POST'){const b=await body(req);requireThat(['closed','archived','reopen'].includes(b.status));const to=b.status==='reopen'?'reopen':'archived';const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,'case_status',?,'staff',? WHERE ${mine}`,uid(),id,to,me.staff_id,...mineArgs),stmt(db,`UPDATE cases SET status=?,closed_at=? WHERE case_id=? AND ${mine}`,to==='reopen'?'collecting':'archived',to==='reopen'?null:now(),id,...mineArgs),syncCase(db,id)]);requireThat(done[1].meta.changes===1,'not_found',404);return {ok:true};}
  if(action==='owner'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
@@ -447,10 +448,16 @@ async function handle(req,env) {
   requireThat(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(view.email||''),'invalid_email');
   const x=await settings(db),link=await portalLink(env,db,id),msg=kind==='opening'?{text:openingText(x,view,link),missing:[1]}:reminderText(x,view,link);
   requireThat(msg.missing.length,'nothing_missing',409);
-  const send_id=crypto.randomUUID(),p=new FormData();
-  for(const [k,v] of Object.entries({action:'send_email',send_id,to:view.email,reply_to:x.email||'',subject:(kind==='opening'?'מסמכים לתיק ':'תזכורת: מסמכים לתיק ')+view.name+(x.office_name?' · '+x.office_name:''),html:emailHtml(msg.text,link)}))p.set(k,v);
-  let r;try{r=await make(env,p);}catch{throw new HttpError(502,'email_failed');}
-  requireThat(r?.status==='sent'&&r.send_id===send_id,'email_failed',502);
+  const send_id=typeof b.send_id==='string'&&/^[0-9a-f-]{36}$/.test(b.send_id)?b.send_id:crypto.randomUUID(),p=new FormData();
+  if(await one(db,'SELECT 1 FROM contacts WHERE send_id=? AND case_id=?',send_id,id))return {sent:true,to:view.email,repeat:true};
+  try{bridge(env);}catch{throw new HttpError(502,'email_failed');}
+  const tried='send:'+send_id;if(env.FILES){requireThat(!await env.FILES.get(tried),'email_maybe_sent',409);await env.FILES.put(tried,'1',{expirationTtl:86400});}
+  const line=v=>String(v??'').replace(/[\r\n]+/g,' ').trim();
+  for(const [k,v] of Object.entries({action:'send_email',send_id,to:line(view.email),reply_to:line(x.email||''),subject:(kind==='opening'?'מסמכים לתיק ':'תזכורת: מסמכים לתיק ')+view.name+(x.office_name?' · '+x.office_name:''),html:emailHtml(msg.text,link)}))p.set(k,k==='subject'?line(v):v);
+  // A clear refusal (Make answered without sending) frees the id for a retry; a lost answer keeps it blocked for a day.
+  // Make answered with an error status: nothing was sent. No answer at all (timeout, network): it may have been sent.
+  let r;try{r=await make(env,p);}catch(e){if(e instanceof HttpError){if(env.FILES)await env.FILES.delete(tried).catch(()=>{});throw new HttpError(502,'email_failed');}throw new HttpError(502,'email_maybe_sent');}
+  if(!(r?.status==='sent'&&r.send_id===send_id)){if(env.FILES)await env.FILES.delete(tried).catch(()=>{});throw new HttpError(502,'email_failed');}
   await db.batch([stmt(db,'INSERT INTO contacts(send_id,case_id,channel,actor_id) VALUES (?,?,?,?)',send_id,id,'email',me.staff_id),
    stmt(db,"INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES (?,?,'email_sent',?,'staff',?)",'contact-'+send_id,id,(kind==='opening'?'פתיחת תיק':'תזכורת')+' · '+view.email,me.staff_id)]);
   return {sent:true,to:view.email};}
