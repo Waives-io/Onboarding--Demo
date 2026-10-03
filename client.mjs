@@ -103,4 +103,6 @@ async function send(id){const s=sending.get(id);if(!s)return;rerender();let wait
  render(current);setStatus(id,failed?failed+' אפשר לנסות שוב.':waiting?'הקובץ נשמר אצל המשרד. אין צורך לשלוח שוב.':'נשלח למשרד ✓');
  if(!failed&&current.status==='client_completed')window.scrollTo({top:0,behavior:'smooth'});}
 
-if(!/^[a-f0-9]{64}$/.test(token))app.innerHTML='<section class="panel card"><h1>נדרש קישור אישי</h1><p>פתחו את הקישור שקיבלתם מהמשרד כדי לראות את מסמכי התיק.</p></section>';else load().catch(e=>{app.innerHTML=`<section class="panel card"><h1>לא ניתן לפתוח את התיק</h1><p>${esc(e.message)}</p><button id="retry">ניסיון נוסף</button></section>`;$('#retry').onclick=()=>location.reload();});
+// A short link (#Ab3xK9Qz1a) asks the worker for the full token once, then the page opens as usual.
+if(/^[A-Za-z0-9]{10}$/.test(token))api('/api/short/'+token).then(r=>{location.replace(location.pathname+'#'+r.token);location.reload();}).catch(()=>{app.innerHTML='<section class="panel card"><h1>הקישור לא פעיל</h1><p>אפשר לבקש מהמשרד קישור חדש.</p></section>';});
+else if(!/^[a-f0-9]{64}$/.test(token))app.innerHTML='<section class="panel card"><h1>נדרש קישור אישי</h1><p>פתחו את הקישור שקיבלתם מהמשרד כדי לראות את מסמכי התיק.</p></section>';else load().catch(e=>{app.innerHTML=`<section class="panel card"><h1>לא ניתן לפתוח את התיק</h1><p>${esc(e.message)}</p><button id="retry">ניסיון נוסף</button></section>`;$('#retry').onclick=()=>location.reload();});

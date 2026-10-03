@@ -51,20 +51,27 @@ async function settings(db) {return await one(db,'SELECT * FROM settings WHERE i
 // Read the version at use time so a concurrent revoke can never hand out the old link.
 // A case loaded straight into the database (demo data, imports) has link_version 0 and no usable token yet.
 // The first time the office asks for its link, version 1 is issued. The guard makes two first requests agree.
+// 10 letters and digits (about 59 bits). It only leads to the PIN screen; the 4 digits and the lockout still guard the documents.
+const BASE62='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const shortCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(10)),b=>BASE62[b%62]).join('');
 const portalLink=async(env,db,id)=>{const version=async()=>(await one(db,'SELECT link_version FROM cases WHERE case_id=?',id)).link_version;
  if(await version()===0)await stmt(db,'UPDATE cases SET link_version=1,token_hash=? WHERE case_id=? AND link_version=0',await hash(await caseLinkToken(id,1,env.PORTAL_LINK_KEY)),id).run();
- return SITE+'client.html#'+await caseLinkToken(id,await version(),env.PORTAL_LINK_KEY);};
+ await version();
+ // Two first requests may race; the guard keeps the code that won.
+ await stmt(db,'UPDATE cases SET short_code=? WHERE case_id=? AND short_code IS NULL',shortCode(),id).run();
+ return SITE+'client.html#'+(await one(db,'SELECT short_code FROM cases WHERE case_id=?',id)).short_code;};
 const ddmmyyyy=d=>String(d||'').split('-').reverse().join('/');
 function reminderText(s,view,link) {
  const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction')&&!(r.status==='missing'&&r.unavailable_note!=null));
  const values={client:view.contact_name||view.client_name,request:view.name,case:view.name,period:periodText(view.period_start,view.period_end,view.reporting_period),due:ddmmyyyy(view.due_date),office:s.office_name,link,
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
- return {missing,text:withPinHint((s.whatsapp_template||DEFAULT_REMINDER).replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m),view.phone)};
+ if(!s.whatsapp_template)return {missing,text:withPinHint([`שלום ${values.client},`,`חסר לתיק ${view.name}: ${missing.map(r=>r.name+(r.correction_message?' (לתקן: '+r.correction_message+')':'')).join(', ')}`,`להעלאה: ${link}`,...(view.due_date?[`עד ${ddmmyyyy(view.due_date).slice(0,5)}`]:[])].join('\n'),view.phone)};
+ return {missing,text:withPinHint(s.whatsapp_template.replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m),view.phone)};
 }
 // The first message, when a case opens: what the office needs and the link. A reminder is a different message (reminderText).
 const ddmm=d=>ddmmyyyy(d).slice(0,5);
 function openingText(s,view,link) {
- const lines=[`שלום ${view.contact_name||view.client_name},`,`פתחנו עבורך תיק: ${view.name}.`,'אלה המסמכים שנצטרך:',...view.requirements.filter(r=>r.required).map(r=>'• '+r.name),`להעלאת המסמכים: ${link}`];
+ const lines=[`שלום ${view.contact_name||view.client_name},`,`פתחנו לך תיק ${view.name}. נצטרך: ${view.requirements.filter(r=>r.required).map(r=>r.name).join(', ')}`,`להעלאה: ${link}`];
  if(view.due_date)lines.push(`עד ${ddmm(view.due_date)}`);
  return withPinHint(lines.join('\n'),view.phone)+(s.office_name?'\n'+s.office_name:'');
 }
@@ -230,6 +237,8 @@ async function handle(req,env) {
  requireThat(env.MAKE_BRIDGE_KEY?.length>=32 && await hash(req.headers.get('X-Bridge-Key')||'')===await hash(env.MAKE_BRIDGE_KEY),'unauthorized',401);
  const b=await body(req),u=await one(db,'SELECT * FROM uploads WHERE submission_id=?',b.submission_id);requireThat(u,'not_found',404);await storeReceipt(db,u,b);return {ok:true};
  }
+ if(path.startsWith('/api/short/')&&method==='GET'){const code=path.slice(11);requireThat(/^[A-Za-z0-9]{10}$/.test(code),'not_found',404);await limited(db,'short:'+ip,60);
+  const c=await one(db,'SELECT case_id,link_version FROM cases WHERE short_code=?',code);requireThat(c,'not_found',404);return {token:await caseLinkToken(c.case_id,c.link_version,env.PORTAL_LINK_KEY)};}
  if(path==='/api/branding'&&method==='GET'){const x=await settings(db);return {office_name:x.office_name,logo_version:x.logo_version};}
  if(path==='/api/logo'&&method==='GET'){const l=await one(db,'SELECT mime,data FROM logo WHERE id=1');requireThat(l,'not_found',404);
   return new Response(Uint8Array.from(atob(l.data),ch=>ch.charCodeAt(0)),{headers:{'Content-Type':l.mime,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff'}});}
@@ -397,8 +406,8 @@ async function handle(req,env) {
  if(action==='link'&&method==='GET')return {link:await portalLink(env,db,id)};
  // A leaked link is revoked by moving the case to a new link version. The old token stops matching token_hash.
  if(action==='revoke-link'&&method==='POST'){const v=c.link_version+1,t=await caseLinkToken(id,v,env.PORTAL_LINK_KEY);
-  const done=await db.batch([stmt(db,`UPDATE cases SET link_version=?,token_hash=? WHERE case_id=? AND link_version=? AND ${mine}`,v,await hash(t),id,c.link_version,...mineArgs),stmt(db,`INSERT INTO events(event_id,case_id,action,actor_type,actor_id) SELECT ?,?,'link_revoked','staff',? WHERE EXISTS(SELECT 1 FROM cases WHERE case_id=? AND link_version=?)`,uid(),id,me.staff_id,id,v)]);
-  requireThat(done[0].meta.changes===1,'conflict',409);return {link:SITE+'client.html#'+t};}
+  const code=shortCode(),done=await db.batch([stmt(db,`UPDATE cases SET link_version=?,token_hash=?,short_code=? WHERE case_id=? AND link_version=? AND ${mine}`,v,await hash(t),code,id,c.link_version,...mineArgs),stmt(db,`INSERT INTO events(event_id,case_id,action,actor_type,actor_id) SELECT ?,?,'link_revoked','staff',? WHERE EXISTS(SELECT 1 FROM cases WHERE case_id=? AND link_version=?)`,uid(),id,me.staff_id,id,v)]);
+  requireThat(done[0].meta.changes===1,'conflict',409);return {link:SITE+'client.html#'+code};}
  if(action==='status'&&method==='POST'){const b=await body(req);requireThat(['closed','archived','reopen'].includes(b.status));const to=b.status==='reopen'?'reopen':'archived';const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,'case_status',?,'staff',? WHERE ${mine}`,uid(),id,to,me.staff_id,...mineArgs),stmt(db,`UPDATE cases SET status=?,closed_at=? WHERE case_id=? AND ${mine}`,to==='reopen'?'collecting':'archived',to==='reopen'?null:now(),id,...mineArgs),syncCase(db,id)]);requireThat(done[1].meta.changes===1,'not_found',404);return {ok:true};}
  if(action==='owner'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
   await db.batch([stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE case_id=?',s.staff_id,s.name,id),event(db,id,'owner_changed',s.name,actor)]);return caseView(db,id,true);}
