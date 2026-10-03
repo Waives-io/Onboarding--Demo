@@ -7,7 +7,7 @@
 - דף הבית: `https://waives-io.github.io/Onboarding--Demo/`
 - סביבת המשרד: `https://waives-io.github.io/Onboarding--Demo/office.html`
 - פורטל לקוח: קישור אישי שנוצר מתוך התיק ומסתיים ב־`client.html#<token>`
-- טופס הקליטה המקורי: `https://waives-io.github.io/Onboarding--Demo/upload.html`
+- טופס הקליטה המקורי (הגרסה הראשונה של הדמו, לא מקושר מדף הבית): `https://waives-io.github.io/Onboarding--Demo/upload.html`
 - API: `https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev`
 
 יש להשתמש במסמכים ובפרטי לקוחות פיקטיביים בלבד.
