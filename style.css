@@ -393,3 +393,21 @@ details.board-group[open] > summary h2::after { content: '▴'; }
 /* A row action that matters but is not the page's main button: yellow outline, not a yellow fill. */
 button.accent { border: 1px solid var(--primary); background: transparent; color: var(--primary); border-radius: 30px; font-weight: 700; }
 button.accent:hover { background: rgba(255,218,42,.10); }
+
+/* New case: three choices. Case types are big buttons; documents are chips that can be dropped or added. */
+.field-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.field-row label { flex: 1 1 260px; }
+.type-choice { margin: 16px 0; padding: 0; border: 0; }
+.type-choice legend { margin-bottom: 8px; font-weight: 700; }
+.choice-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice { min-height: 44px; padding: 8px 16px; border: 1px solid var(--line-strong); border-radius: 30px; background: transparent; color: var(--text); font-weight: 600; }
+.choice[aria-pressed=true] { border-color: var(--primary); background: rgba(255,218,42,.12); color: var(--primary); }
+.choice.add { border-style: dashed; color: var(--muted); }
+.doc-pick { margin: 16px 0 8px; }
+.doc-pick-title { display: block; margin-bottom: 8px; font-weight: 700; }
+.doc-tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; padding: 0; list-style: none; }
+.doc-tag { min-height: 40px; padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: 30px; background: var(--surface-soft); color: var(--text); font-weight: 500; }
+.doc-tag[aria-pressed=false] { border-style: dashed; background: transparent; color: var(--muted); }
+.quiet-defaults { margin: 14px 0 6px; color: var(--muted); }
+.quiet-defaults .text-button { min-height: 36px; padding: 0 2px; color: var(--violet); text-decoration: underline; }
+#due-field[hidden] { display: none; }

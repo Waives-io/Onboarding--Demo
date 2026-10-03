@@ -165,50 +165,61 @@ function periodLabel(a,b){if(!a||!b)return '';const [y1,m1,d1]=a.split('-'),[y2,
  if(d1==='01'&&+d2===last){if(y1===y2&&m1===m2)return `${m1}/${y1}`;if(y1===y2&&m1==='01'&&m2==='12')return y1;return `${m1}/${y1}–${m2}/${y2}`;}
  return `${d1}/${m1}/${y1}–${d2}/${m2}/${y2}`;}
 const iso=d=>d.toISOString().slice(0,10);
-// A new case: the client, the case type with its documents, the period and the due date. Name and category have defaults.
+// A new case in three choices: the client, the case type, the period. Everything else has a quiet default:
+// due in 14 days, owner = whoever opens it, the case type's documents. Documents are chips: × drops one, ＋ adds.
+// "Required" and "how many files" live only in the case type editor. A document asked for here is asked for.
 // opts.template preselects a case type (from a landing page inquiry); opts.inquiry is marked handled once the case is open.
-function newCase(clientId='',keep=null,opts={}){$('#modal').oncancel=null;const pre=clients.find(c=>c.client_id===clientId),categories=[...new Set(['עצמאי','חברה בע״מ','שכיר','עמותה',...cases.map(c=>c.category)])].filter(Boolean);
- const now=new Date(),start=new Date(Date.UTC(now.getFullYear(),now.getMonth()-1,1)),end=new Date(Date.UTC(now.getFullYear(),now.getMonth(),0));
- dialog('תיק חדש',`<form id="case-form"><div class="form-grid"><label class="wide">לקוח<input id="client-pick" list="client-options" placeholder="הקלדת שם הלקוח או ח״פ" autocomplete="off" required value="${esc(pre?clientLabel(pre):'')}"><button type="button" class="text-button" id="inline-client">＋ לקוח חדש</button></label><datalist id="client-options">${clients.map(c=>`<option value="${esc(clientLabel(c))}">`).join('')}</datalist>
-<label class="wide">סוג תיק *<select id="template">${templates.map(t=>`<option value="${esc(t.template_id)}">${esc(t.name)}</option>`).join('')}<option value="">אחר: בחירת מסמכים ידנית</option>${isAdmin()?addOption('סוג תיק חדש'):''}</select></label>
-<label>תקופה מתאריך${dateInput('name="period_start"',iso(start),true)}</label><label>עד תאריך${dateInput('name="period_end"',iso(end),true)}</label>
-<label>תאריך יעד להעברת החומרים${dateInput('name="due_date"','',true)}</label>
-${isAdmin()?`<label>אחראי על התיק<select name="owner_id">${staff.filter(p=>p.active!==0).map(p=>`<option value="${esc(p.staff_id)}" ${p.staff_id===me.staff_id?'selected':''}>${esc(p.name)}</option>`).join('')}${addOption('איש צוות חדש')}</select></label>`:`<label>אחראי על התיק<input value="${esc(me.name)}" disabled></label>`}</div>
-<h3>המסמכים שיבקשו מהלקוח</h3><p class="muted">מסמכי החובה מסומנים. מסמכים "לפי הצורך" מסמנים רק כשהם רלוונטיים ללקוח הזה.</p><div id="items"></div>
-${isAdmin()?'<label class="save-type" id="save-type-row" hidden><input type="checkbox" id="save-type"> לשמור את המסמכים שהוספתי גם בסוג התיק, לתיקים הבאים</label>':''}
-<p id="form-error" class="error" role="alert"></p><button class="primary">פתיחת התיק ושליחה ללקוח</button></form>`);
- const form=$('#case-form');bindDates(form);
- // What was typed survives a detour to add a client, a case type or a staff member.
- const snapshot=()=>({fields:Object.fromEntries(new FormData(form)),client:$('#client-pick').value,template:$('#template').value,items:rowsState()});
- // Cancelling the add form brings the case form back as it was. Saving brings it back with the new entry chosen.
- const detour=(open,patch)=>{const k=snapshot(),m=$('#modal'),cancel=()=>{m.oncancel=null;newCase('',k,opts);};open(id=>newCase('',{...k,...patch(id)},opts));
-  $('#close-modal').onclick=cancel;m.oncancel=e=>{e.preventDefault();cancel();};};
- if(keep){for(const [n,v] of Object.entries(keep.fields||{}))if(form.elements[n]&&n!=='owner_id'){if(form.elements[n].type==='date')setDate(form.elements[n],v);else form.elements[n].value=v;}$('#client-pick').value=keep.client||'';if([...$('#template').options].some(o=>o.value===keep.template))$('#template').value=keep.template;}
- else if(opts.template&&templates.some(t=>t.template_id===opts.template))$('#template').value=opts.template;
+const yearly=t=>/שנתי|החזר מס|הצהרת הון/.test(t?.name||'');
+const MONTH_NAMES=['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+// A full year for annual work (last year first), otherwise a month (last month first).
+function periodChoices(t){const now=new Date(),y=now.getFullYear();
+ if(yearly(t))return [y-1,y-2,y-3,y].map(v=>({value:`${v}-01-01|${v}-12-31`,label:String(v)}));
+ return Array.from({length:13},(_,i)=>{const s=new Date(Date.UTC(y,now.getMonth()-1-i,1)),e=new Date(Date.UTC(y,now.getMonth()-i,0));return {value:`${iso(s)}|${iso(e)}`,label:`${MONTH_NAMES[s.getUTCMonth()]} ${s.getUTCFullYear()}`};});}
+const docsOf=t=>(t?.items||[]).map(i=>({document_id:i.document_id,name:i.name,max_files:Number(i.max_files)||1,on:!!i.required}));
+function newCase(clientId='',keep=null,opts={}){$('#modal').oncancel=null;
  const regular=x=>x?.regular_template_id&&templates.some(t=>t.template_id===x.regular_template_id)?x.regular_template_id:null;
- if(!keep&&!opts.template&&regular(pre))$('#template').value=regular(pre);
- const chosen=()=>templates.find(t=>t.template_id===$('#template').value);
- const autoName=()=>{const t=chosen(),p=periodLabel($('[name=period_start]').value,$('[name=period_end]').value);return [t?.name||'איסוף מסמכים',p].filter(Boolean).join(' · ');};
- const refreshName=()=>{};
- let datesTouched=!!keep;
- const yearly=t=>/שנתי|החזר מס|הצהרת הון/.test(t?.name||'');
- const setPeriod=()=>{if(datesTouched)return;const y=now.getFullYear()-1,t=chosen();setDate(form.elements.period_start,yearly(t)?`${y}-01-01`:iso(start));setDate(form.elements.period_end,yearly(t)?`${y}-12-31`:iso(end));};
- const syncSave=()=>{const row=$('#save-type-row');if(row)row.hidden=!(chosen()&&rowsState().some(r=>r.added));};
- const showItems=()=>{const t=chosen();setPeriod();$('#items').innerHTML=rowsEditor((t?.items||[]).map(i=>({...i,included:!!i.required})),true);bindRows(syncSave);refreshName();};
- showItems();if(keep&&!keep.freshTemplate){$('#items').innerHTML=rowsEditor(keep.items||[],true);bindRows(syncSave);}
- if(keep&&form.elements.owner_id)form.elements.owner_id.value=keep.owner||keep.fields?.owner_id||me.staff_id;
- onAdd($('#template'),()=>detour(done=>templateForm({},done),id=>({template:id,freshTemplate:true})));
- $('#client-pick').addEventListener('change',()=>{const r=regular(clients.find(x=>clientLabel(x)===$('#client-pick').value.trim()));if(r&&$('#template').value!==r){$('#template').value=r;showItems();}});
- const tpl=$('#template');tpl.addEventListener('change',()=>{if(tpl.isConnected&&tpl.value!==ADD)showItems();});
- if(form.elements.owner_id)onAdd(form.elements.owner_id,()=>detour(done=>staffForm({},done),id=>({owner:id})));
- document.querySelectorAll('[name=period_start],[name=period_end]').forEach(i=>i.oninput=()=>{datesTouched=true;refreshName();});
- $('#inline-client').onclick=()=>detour(done=>clientForm(null,done),id=>{const c=clients.find(x=>x.client_id===id);return {client:c?clientLabel(c):''};});
- bindForm('#case-form',async b=>{const client=clients.find(c=>clientLabel(c)===$('#client-pick').value.trim());if(!client)throw new Error('יש לבחור לקוח מהרשימה, או ליצור לקוח חדש.');if(b.period_start>b.period_end)throw new Error('תאריך הסיום של התקופה לפני תאריך ההתחלה.');
-  b.requirements=selectedItems();if(!b.requirements.length)throw new Error('יש לסמן לפחות מסמך אחד.');if(!b.requirements.some(r=>r.required))throw new Error('לפחות מסמך אחד צריך להיות חובה.');
-  const t=chosen(),added=rowsState().filter(r=>r.added);b.client_id=client.client_id;b.name=autoName();b.type=t?.name||'אחר';
-  const r=await call('/api/cases',b);
-  // Documents added here join the case type when the admin leaves the box ticked. The case is already open either way.
-  if(t&&isAdmin()&&$('#save-type')?.checked&&added.length){try{await call('/api/templates',{template_id:t.template_id,name:t.name,items:[...t.items.map(i=>({document_id:i.document_id,required:!!i.required,max_files:Number(i.max_files)||1})),...added.map(a=>({...(a.document_id?{document_id:a.document_id}:{name:a.name}),required:a.required,max_files:a.max_files}))]});toast('המסמכים החדשים נשמרו גם בסוג התיק');}catch(e){toast('התיק נפתח, אבל המסמכים לא נשמרו בסוג התיק: '+e.message);}}
+ const pre=clients.find(c=>c.client_id===clientId),due=new Date();due.setDate(due.getDate()+14);
+ const first=opts.template&&templates.some(t=>t.template_id===opts.template)?opts.template:regular(pre)||templates[0]?.template_id||'';
+ const k=keep||{client:pre?clientLabel(pre):'',template:first,typeTouched:!!opts.template,period:'',items:docsOf(templates.find(t=>t.template_id===first)),due:iso(due),showDue:false};
+ if(pre&&keep)k.client=clientLabel(pre);
+ const chosen=()=>templates.find(t=>t.template_id===k.template),periods=periodChoices(chosen());if(!periods.some(p=>p.value===k.period))k.period=periods[0].value;
+ const used=new Set(k.items.map(i=>i.name.trim().toLowerCase()));
+ dialog('תיק חדש',`<form id="case-form" novalidate>
+<div class="field-row"><label class="wide">לקוח<input id="client-pick" list="client-options" placeholder="שם הלקוח או ח״פ" autocomplete="off" required value="${esc(k.client)}"></label><button type="button" class="text-button" id="inline-client">＋ לקוח חדש</button></div><datalist id="client-options">${clients.map(c=>`<option value="${esc(clientLabel(c))}">`).join('')}</datalist>
+<fieldset class="type-choice"><legend>סוג תיק</legend><div class="choice-chips">${templates.map(t=>`<button type="button" class="choice" data-type="${esc(t.template_id)}" aria-pressed="${k.template===t.template_id}">${esc(t.name)}</button>`).join('')}<button type="button" class="choice" data-type="" aria-pressed="${k.template===''}">אחר</button>${isAdmin()?'<button type="button" class="choice add" id="new-type">＋ סוג תיק חדש</button>':''}</div></fieldset>
+<label>תקופה<select id="case-period">${periods.map(p=>`<option value="${p.value}" ${p.value===k.period?'selected':''}>${esc(p.label)}</option>`).join('')}</select></label>
+<div class="doc-pick"><span class="doc-pick-title">המסמכים שנבקש</span><ul class="doc-tags">${k.items.map((i,n)=>`<li><button type="button" class="doc-tag" data-doc="${n}" aria-pressed="${i.on}" aria-label="${i.on?'הסרת':'הוספת'} ${esc(i.name)}">${i.on?'':'＋ '}${esc(i.name)}${i.on?'<span aria-hidden="true"> ×</span>':''}</button></li>`).join('')}</ul>
+<div class="add-document"><input id="doc-search" list="doc-options" placeholder="＋ מסמך נוסף: בוחרים או מקלידים שם" aria-label="הוספת מסמך" autocomplete="off"><datalist id="doc-options">${catalog.filter(c=>c.active&&!used.has(c.name.trim().toLowerCase())).map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist></div></div>
+${isAdmin()&&chosen()&&k.items.some(i=>i.added&&i.on)?`<label class="save-type"><input type="checkbox" id="save-type" ${k.saveType?'checked':''}> לשמור את המסמכים שהוספתי גם בסוג התיק, לתיקים הבאים</label>`:''}
+<p class="quiet-defaults">עד <button type="button" class="text-button" id="due-edit">${date(k.due)}</button> · אחראי: ${esc(me.name)}</p>
+<div id="due-field" ${k.showDue?'':'hidden'}><label>תאריך יעד להעברת החומרים${dateInput('name="due_date"',k.due,true)}</label></div>
+<button class="primary">פתיחת התיק ושליחה ללקוח</button></form>`);
+ const form=$('#case-form');bindDates(form);
+ // Everything chosen so far, so a redraw or a detour (new client, new case type) comes back exactly as it was.
+ const read=()=>{k.client=$('#client-pick').value;k.period=$("#case-period").value;k.due=form.elements.due_date.value||k.due;k.saveType=!!$('#save-type')?.checked;return k;};
+ const redraw=()=>newCase('',read(),opts);
+ const detour=(open,patch)=>{const back={...read()},m=$('#modal'),cancel=()=>{m.oncancel=null;newCase('',back,opts);};open(id=>newCase('',{...back,...patch(id)},opts));
+  $('#close-modal').onclick=cancel;m.oncancel=e=>{e.preventDefault();cancel();};};
+ document.querySelectorAll('[data-type]').forEach(b=>b.onclick=()=>{read();k.template=b.dataset.type;k.typeTouched=true;k.items=docsOf(chosen());k.period='';redraw();});
+ document.querySelectorAll('[data-doc]').forEach(b=>b.onclick=()=>{read();const i=k.items[+b.dataset.doc];if(i.added&&i.on)k.items.splice(+b.dataset.doc,1);else i.on=!i.on;redraw();$(`[data-doc]`)?.focus();});
+ const addDoc=()=>{const input=$('#doc-search'),name=input.value.trim();if(!name)return;read();const have=k.items.find(i=>i.name.trim().toLowerCase()===name.toLowerCase());
+  if(have)have.on=true;else{const doc=catalog.find(c=>c.active&&c.name.trim().toLowerCase()===name.toLowerCase());k.items.push({document_id:doc?.document_id,name:doc?.name||name,max_files:20,on:true,added:true});}redraw();$('#doc-search')?.focus();};
+ $('#doc-search').oninput=e=>{if(!e.inputType||e.inputType==='insertReplacementText')addDoc();};
+ $('#doc-search').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();addDoc();}};
+ // Choosing a client brings their regular case type, unless the office already picked one.
+ $('#client-pick').addEventListener('change',()=>{const r=regular(clients.find(x=>clientLabel(x)===$('#client-pick').value.trim()));if(r&&!k.typeTouched&&k.template!==r){read();k.template=r;k.items=docsOf(chosen());k.period='';redraw();}});
+ $('#due-edit').onclick=()=>{k.showDue=true;$('#due-field').hidden=false;form.querySelector('#due-field .date-text').focus();};
+ $('#inline-client').onclick=()=>detour(done=>clientForm(null,done),id=>{const c=clients.find(x=>x.client_id===id),r=regular(c);return {client:c?clientLabel(c):'',...(r&&!k.typeTouched?{template:r,items:docsOf(templates.find(t=>t.template_id===r)),period:''}:{})};});
+ if($('#new-type'))$('#new-type').onclick=()=>detour(done=>templateForm({},done),id=>({template:id,typeTouched:true,items:docsOf(templates.find(t=>t.template_id===id)),period:''}));
+ bindForm('#case-form',async b=>{read();const client=clients.find(c=>clientLabel(c)===k.client.trim());if(!client){$('#client-pick').focus();throw new Error('יש לבחור לקוח מהרשימה, או ליצור לקוח חדש.');}
+  const items=k.items.filter(i=>i.on);if(!items.length)throw new Error('יש לבחור לפחות מסמך אחד.');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(k.due))throw new Error('תאריך היעד אינו תקין.');
+  const t=chosen(),[period_start,period_end]=k.period.split('|');
+  const r=await call('/api/cases',{client_id:client.client_id,name:[t?.name||'איסוף מסמכים',periodLabel(period_start,period_end)].filter(Boolean).join(' · '),type:t?.name||'אחר',period_start,period_end,due_date:k.due,
+   requirements:items.map(i=>({...(i.document_id?{document_id:i.document_id}:{}),name:i.name,required:true,max_files:i.max_files}))});
+  // Documents added here join the case type when the admin ticks the box. The case is already open either way.
+  const added=items.filter(i=>i.added);
+  if(t&&isAdmin()&&k.saveType&&added.length){try{await call('/api/templates',{template_id:t.template_id,name:t.name,items:[...t.items.map(i=>({document_id:i.document_id,required:!!i.required,max_files:Number(i.max_files)||1})),...added.map(a=>({...(a.document_id?{document_id:a.document_id}:{name:a.name}),required:true,max_files:1}))]});toast('המסמכים החדשים נשמרו גם בסוג התיק');}catch(e){toast('התיק נפתח, אבל המסמכים לא נשמרו בסוג התיק: '+e.message);}}
   if(opts.inquiry)await call('/api/inquiries/'+opts.inquiry,{status:'handled',client_id:client.client_id}).catch(()=>{});
   $('#modal').close();await load();await showCase(r.case_id);openedDialog(r.case_id).catch(e=>toast(e.message));});}
 
