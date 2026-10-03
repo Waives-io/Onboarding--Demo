@@ -424,3 +424,19 @@ button.accent:hover { background: rgba(255,218,42,.10); }
 .doc-preview p { margin: 0; padding: 14px; }
 #correction .choice-chips { margin-bottom: 12px; }
 @media (max-width: 720px) { .case-status-line { grid-template-columns: 1fr auto; } .case-status-line .waiting { grid-column: 1 / -1; } .doc-preview iframe { height: 60vh; } }
+
+/* Home on a computer: the whole message fits one screen. Smaller headline, less air under the header, benefits in one row. */
+@media (min-width: 900px) {
+  .home .welcome { padding: 34px max(28px, calc((100vw - 1080px) / 2 + 28px)) 24px; margin-bottom: 8px; }
+  .home .welcome h1 { font-size: clamp(2.2rem, 3.4vw, 3rem); margin-bottom: 10px; }
+  .home .welcome p { font-size: 1rem; }
+  .home .home-actions { margin-top: 18px; }
+  .home .home-actions .primary { min-height: 46px; padding: 10px 26px; }
+  .home .benefits { margin: 0 0 24px; }
+  .home .benefits h2 { margin-bottom: 12px; font-size: 1.5rem; }
+  .home .benefit-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .home .benefit { padding: 16px; }
+  .home .benefit h3 { font-size: 1rem; }
+  .home .benefit p { font-size: .9rem; line-height: 1.5; }
+  .home.client-page { max-width: 1080px; }
+}
