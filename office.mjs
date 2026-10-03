@@ -1,5 +1,5 @@
 import {$,esc,status,badge,date,toast,api,field,dialog,bindForm,progress,deadlineLabel,dateInput,bindDates,setDate} from './common.mjs';
-let token=sessionStorage.getItem('office_session')||'',inquiries=[],cases=[],clients=[],catalog=[],templates=[],settings={},staff=[],me={},view='cases',statusFilter='active';
+let token=sessionStorage.getItem('office_session')||'',inquiries=[],cases=[],clients=[],catalog=[],templates=[],settings={},staff=[],me={},view='cases';
 const call=(path,data)=>api(path,{token,...(data!==undefined?{method:'POST',data}:{})});
 const app=$('#app');
 const ACTIVE=['collecting','action_required','client_completed','ready_for_work'];
@@ -41,11 +41,8 @@ const options=(values,all)=>`<option value="">${esc(all)}</option>`+[...new Set(
 const periodKey=c=>periodLabel(c.period_start,c.period_end)||String(c.reporting_period||'').replace(/^(\d{4})-(\d{2})$/,'$2/$1');
 const periodOrder=k=>{let m=k.match(/^(\d{2})\/(\d{4})$/);if(m)return m[2]+'-'+m[1];m=k.match(/^(\d{4})$/);if(m)return m[1]+'-13';m=k.match(/(\d{2})\/(\d{2})\/(\d{4})$/);return m?m[3]+'-'+m[2]:k;};
 const periodOptions=()=>`<option value="">כל התקופות</option>`+[...new Set(cases.map(periodKey).filter(Boolean))].sort((a,b)=>periodOrder(b).localeCompare(periodOrder(a))).map(k=>`<option value="${esc(k)}">${esc(k)}</option>`).join('');
-let showClosed=false;
-
-// Dashboard tiles are the status filter. Their labels are the same words as the status badges.
-const tiles=[{key:'active',label:'כל הפעילים',match:c=>ACTIVE.includes(c.status)},{key:'client_completed',label:'מוכן לבדיקה',match:c=>c.status==='client_completed'},{key:'action_required',label:'נדרש תיקון',match:c=>c.status==='action_required'},{key:'collecting',label:'ממתין ללקוח',match:c=>c.status==='collecting'},{key:'due',label:'יעד קרוב או באיחור',match:c=>ACTIVE.includes(c.status)&&['warning','urgent','overdue'].includes(c.deadline)}];
-const statusMatch=c=>statusFilter==='all'||(tiles.find(t=>t.key===statusFilter)?.match||(x=>x.status===statusFilter))(c);
+// The board's tabs: what needs the office now, what is ready for work, and the archive.
+let boardTab='work',showFilters=false;
 
 // We only open WhatsApp or email with the message ready, so the record says "contact", never "sent".
 const CHANNEL={whatsapp:'WhatsApp',email:'דוא״ל',copy:'העתקת הקישור'};
@@ -68,26 +65,42 @@ function bindInquiries(){
  document.querySelectorAll('[data-inquiry-dismiss]').forEach(b=>b.onclick=async()=>{const q=inquiries.find(x=>x.inquiry_id===b.dataset.inquiryDismiss);if(!confirm(`להוריד את הפנייה של ${q.name} מהרשימה?`))return;try{await call('/api/inquiries/'+q.inquiry_id,{status:'dismissed'});toast('הפנייה הוסרה מהרשימה');await load();}catch(e){toast(e.message);}});}
 const unavailableLine=c=>c.unavailable?`<small class="unavailable-line">${c.unavailable===1?'מסמך אחד':c.unavailable+' מסמכים'} שאין ללקוח</small>`:'';
 
-function renderCases(){const today=new Intl.DateTimeFormat('he-IL',{weekday:'long',day:'numeric',month:'numeric',year:'numeric'}).format(new Date());app.innerHTML=`<div class="page-topline"><small>${esc(today)}</small></div><div class="page-heading"><div><span class="eyebrow">לוח עבודה</span><h1>כל תיק. כל המסמכים.</h1><p>מה הגיע, מה חסר ומה מחכה לבדיקה שלך.</p></div><div class="actions"><button class="primary" id="new-case">＋ תיק חדש</button></div></div>
+// Which group a case belongs to. First match wins, so every open case lands in exactly one place.
+const LATE=['warning','urgent','overdue'];
+const groupOf=c=>['closed','archived'].includes(c.status)?'archive':c.status==='ready_for_work'?'ready':c.status==='client_completed'||Number(c.reviewable_count)>0?'review':['collecting','action_required'].includes(c.status)&&LATE.includes(c.deadline)?'late':'progress';
+// The due date in words: "עוד 3 ימים", "באיחור של 4 ימים". The colour comes from data-deadline.
+function dueWords(c){const d=c.days_left;if(d==null||d==='')return c.due_date?date(c.due_date):'';return d<0?`באיחור של ${-d===1?'יום':-d+' ימים'}`:d===0?'היום':d===1?'מחר':d===2?'עוד יומיים':`עוד ${d} ימים`;}
+function caseRow(c,group){const action=group==='review'?`<button type="button" class="accent small" data-case="${esc(c.case_id)}">בדיקה</button>`:group==='late'?`<button type="button" class="small" data-whatsapp="${esc(c.case_id)}">תזכורת</button>`:'';
+ return `<li class="case-row" data-deadline="${esc(c.deadline)}"><button type="button" class="case-name" data-case="${esc(c.case_id)}"><strong>${esc(c.client_name)}</strong><small>${esc(c.name)}${staff.filter(p=>p.active!==0).length>1&&ownerName(c)?' · '+esc(ownerName(c)):''}</small></button><div class="row-progress">${progress(c)}${group==='late'&&c.missing?`<small>חסר: ${esc(c.missing)}</small>`:''}</div><span class="due" data-deadline="${esc(c.deadline)}">${['ready','archive'].includes(group)?date(c.completed_at||c.closed_at||c.due_date):esc(dueWords(c))}</span><div class="row-action">${action}</div></li>`;}
+const byDue=(a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999'));
+function renderCases(){app.innerHTML=`<div class="page-heading board-head"><div><span class="eyebrow">לוח עבודה</span><h1>מה עליי עכשיו</h1></div><div class="actions"><button class="primary" id="new-case">＋ תיק חדש</button></div></div>
 ${inquiriesHtml()}
-<div class="stats">${tiles.map(t=>`<button type="button" class="stat" data-tile="${t.key}" aria-pressed="${statusFilter===t.key}"><span>${esc(t.label)}</span><strong>${cases.filter(t.match).length}</strong></button>`).join('')}</div>
-<div class="filters"><label>חיפוש<input id="search" placeholder="שם לקוח, ח״פ או שם תיק"></label><label>תקופת דיווח<select id="period">${periodOptions()}</select></label><label class="due-filter"><span>יעד עד</span>${dateInput('id="due"')}</label><label>אחראי<select id="owner">${options(cases.map(ownerName),'כל האחראים')}</select></label><button type="button" class="sort" id="closed-toggle" aria-pressed="${showClosed}">ארכיון (${cases.filter(c=>['closed','archived'].includes(c.status)).length})</button></div>
-<section class="panel table-wrap"><table><thead id="case-head"></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>אין תיקים להצגה. אפשר לפתוח תיק חדש או לשנות את הסינון.</div><div id="client-hits"></div></section>`;
- const filter=()=>{const q=$('#search').value.trim().toLowerCase();
-  const rows=cases.filter(c=>[c.client_name,c.business_number,c.name].join(' ').toLowerCase().includes(q)&&(showClosed?['closed','archived'].includes(c.status):statusMatch(c))&&(!$('#period').value||periodKey(c)===$('#period').value)&&(!$('#due').value||c.due_date<=$('#due').value)&&(!$('#owner').value||ownerName(c)===$('#owner').value));
-  $('#case-head').innerHTML=`<tr>${sortHead('לקוח / תיק','client',caseSort)}${sortHead('תקופת דיווח','period',caseSort)}${sortHead('תאריך יעד','due',caseSort)}<th>מסמכים</th>${sortHead('סטטוס','status',caseSort)}<th>פנייה ללקוח</th>${sortHead('אחראי','owner',caseSort)}${sortHead('פעילות אחרונה','activity',caseSort)}</tr>`;bindSort(caseSort,filter);
-  $('#rows').innerHTML=sortRows(rows,CASE_KEYS,caseSort).map(c=>`<tr data-deadline="${esc(c.deadline)}"><td><button class="case-name" data-case="${esc(c.case_id)}"><strong>${esc(c.client_name)}</strong><small>${esc(c.name)}</small></button></td><td><bdi dir="ltr">${esc(periodKey(c))}</bdi></td><td><strong class="due" data-deadline="${esc(c.deadline)}">${date(c.due_date)}</strong></td><td class="compact-progress">${progress(c)}${c.missing?`<small>חסר: ${esc(c.missing)}</small>`:''}${unavailableLine(c)}</td><td>${badge(c.status)}</td><td>${contactLine(c)||'—'}${whatsappButton(c)}</td><td>${esc(ownerName(c)||'—')}</td><td>${date(c.last_activity)}</td></tr>`).join('');
-  $('#empty').hidden=rows.length>0;
+<div class="board-tools"><label class="search-field"><span class="visually-hidden">חיפוש</span><input id="search" type="search" placeholder="חיפוש לקוח, ח״פ או תיק"></label><button type="button" id="filter-toggle" aria-expanded="${showFilters}" aria-controls="filters">סינון</button></div>
+<div class="filters" id="filters" ${showFilters?'':'hidden'}><label>תקופת דיווח<select id="period">${periodOptions()}</select></label><label class="due-filter"><span>יעד עד</span>${dateInput('id="due"')}</label>${staff.filter(p=>p.active!==0).length>1?`<label>אחראי<select id="owner">${options(cases.map(ownerName),'כל האחראים')}</select></label>`:''}</div>
+<div class="board-tabs" role="tablist" aria-label="תצוגת לוח העבודה">${[['work','לטיפול'],['ready','מוכנים לעבודה'],['archive','ארכיון']].map(([k,l])=>`<button type="button" role="tab" data-board-tab="${k}" aria-selected="${boardTab===k}"><span>${l}</span> <span class="count" id="count-${k}"></span></button>`).join('')}</div>
+<div id="board"></div><div id="client-hits"></div>`;
+ const filter=()=>{const q=$('#search').value.trim().toLowerCase(),period=$('#period').value,due=$('#due').value,owner=$('#owner')?.value||'';
+  const rows=cases.filter(c=>[c.client_name,c.business_number,c.name].join(' ').toLowerCase().includes(q)&&(!period||periodKey(c)===period)&&(!due||c.due_date<=due)&&(!owner||ownerName(c)===owner));
+  const groups={review:[],late:[],progress:[],ready:[],archive:[]};rows.forEach(c=>groups[groupOf(c)].push(c));
+  groups.review.sort(byDue);groups.late.sort((a,b)=>(a.days_left??99)-(b.days_left??99));groups.progress.sort(byDue);groups.ready.sort((a,b)=>String(b.completed_at||'').localeCompare(String(a.completed_at||'')));groups.archive.sort((a,b)=>String(b.closed_at||'').localeCompare(String(a.closed_at||'')));
+  const work=groups.review.length+groups.late.length+groups.progress.length;
+  $('#count-work').textContent=work;$('#count-ready').textContent=groups.ready.length;$('#count-archive').textContent=groups.archive.length;
+  const list=(items,group)=>`<ul class="case-list">${items.map(c=>caseRow(c,group)).join('')}</ul>`;
+  const section=(group,title,items,empty)=>`<section class="board-group" data-group="${group}"><h2>${title} <span class="count">${items.length}</span></h2>${items.length?list(items,group):`<p class="muted empty-line">${empty}</p>`}</section>`;
+  $('#board').innerHTML=boardTab==='work'?(work?section('review','מחכה לבדיקה שלך',groups.review,'אין כרגע מסמכים שמחכים לבדיקה.')+section('late','הלקוח מתעכב',groups.late,'אף לקוח לא מתעכב כרגע.')+(groups.progress.length?`<details class="board-group" data-group="progress"><summary><h2>בתהליך <span class="count">${groups.progress.length}</span></h2></summary>${list(groups.progress,'progress')}</details>`:'')
+   :`<div class="empty"><p>${q||period||due||owner?'אין תיקים שמתאימים לחיפוש.':'אין כרגע מה לבדוק או לרדוף אחריו.'}</p><button type="button" class="primary" data-empty-new>＋ תיק חדש</button></div>`)
+   :boardTab==='ready'?section('ready','מוכנים לעבודה',groups.ready,'עדיין אין תיקים שכל המסמכים שלהם אושרו.'):section('archive','ארכיון',groups.archive,'הארכיון ריק.');
+  document.querySelectorAll('[data-board-tab]').forEach(t=>t.setAttribute('aria-selected',String(t.dataset.boardTab===boardTab)));
   // A search for a client who has no matching case should still lead somewhere: offer to open a case for them.
   const shown=new Set(rows.map(c=>c.client_id)),hits=q?clients.filter(c=>!shown.has(c.client_id)&&[c.name,c.business_number].join(' ').toLowerCase().includes(q)).slice(0,5):[];
   $('#client-hits').innerHTML=hits.length?`<p class="muted">לקוחות שנמצאו בחיפוש בלי תיק מתאים:</p><ul class="file-list">${hits.map(c=>`<li><div><strong>${esc(c.name)}</strong><small>${esc(c.business_number||c.phone)} · ${caseCount(c.client_id)} תיקים</small></div><button type="button" data-new-for="${esc(c.client_id)}">＋ תיק חדש</button></li>`).join('')}</ul>`:'';
   document.querySelectorAll('[data-case]').forEach(b=>b.onclick=()=>showCase(b.dataset.case).catch(e=>toast(e.message)));
   document.querySelectorAll('[data-whatsapp]').forEach(b=>b.onclick=()=>sendWhatsapp(b.dataset.whatsapp));
   document.querySelectorAll('[data-new-for]').forEach(b=>b.onclick=()=>newCase(b.dataset.newFor));
-  document.querySelectorAll('[data-tile]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tile===statusFilter)));};
- document.querySelectorAll('[data-tile]').forEach(b=>b.onclick=()=>{showClosed=false;$('#closed-toggle').setAttribute('aria-pressed','false');statusFilter=statusFilter===b.dataset.tile?'active':b.dataset.tile;filter();});
- $('#closed-toggle').onclick=e=>{showClosed=!showClosed;e.currentTarget.setAttribute('aria-pressed',String(showClosed));if(showClosed)statusFilter='';else statusFilter='active';filter();};
- bindDates(app);document.querySelectorAll('.filters input,.filters select').forEach(i=>i.oninput=filter);filter();
+  if($('[data-empty-new]'))$('[data-empty-new]').onclick=()=>newCase();};
+ document.querySelectorAll('[data-board-tab]').forEach(t=>t.onclick=()=>{boardTab=t.dataset.boardTab;filter();});
+ $('#filter-toggle').onclick=e=>{showFilters=!showFilters;$('#filters').hidden=!showFilters;e.currentTarget.setAttribute('aria-expanded',String(showFilters));};
+ bindDates(app);document.querySelectorAll('#search,.filters input,.filters select').forEach(i=>i.oninput=filter);filter();
  $('#new-case').onclick=()=>newCase();bindInquiries();}
 
 // A "לקוח" is the client: who they are, who to talk to, and their regular case type ("סוג תיק").
