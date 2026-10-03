@@ -309,3 +309,14 @@ test('retrying the same submission with a different note is a conflict', async t
   assert.equal((await uploadWithNote(e, 'first', id)).status, 200);
   assert.equal((await uploadWithNote(e, 'changed', id)).body.error, 'submission_conflict');
 });
+
+test('an uploaded file keeps a copy for the office preview, with its type and name', async t => {
+  const db = await seed(), store = new Map(), e = { ...env(db), FILES: { put: async (k, v, o) => store.set(k, { v, o }), get: async k => store.get(k)?.v ?? null } };
+  mockMake(t, form => receiptFor(form.get('submission_id')));
+  const r = await upload(e, 'req-a', undefined, 'copy');
+  assert.equal(r.status, 200);
+  const saved = store.get('file:' + r.submission_id);
+  assert.equal(new TextDecoder().decode(saved.v), '%PDF-1.4 copy');
+  assert.deepEqual(saved.o.metadata, { mime: 'application/pdf', filename: 'copy.pdf' });
+  assert.equal(saved.o.expirationTtl, 15552000);
+});

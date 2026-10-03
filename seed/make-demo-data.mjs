@@ -64,6 +64,30 @@ cases.forEach(([client, type, docs, range, due, status, states, note], i) => {
   });
   out.push(`INSERT OR IGNORE INTO events(event_id,case_id,action,detail,actor_type,actor_id) VALUES (${q(id + '-created')},${q(id)},'case_created',${ADMIN_NAME},'staff',${ADMIN});`);
 });
+// Added 2026-10-03: every case tells a story (link emailed, client opened it, files arrived, a reminder for the late ones),
+// and every uploaded file has a fictional PDF behind it (seed/demo-files/<submission_id>.pdf, loaded into KV by make-demo-kv.mjs).
+// demo-case-09 is the "July instead of August" case: its sales report is for the wrong month on purpose.
+const files = [], ev = (id, n, action, detail, at, actor = ['staff', ADMIN]) =>
+  out.push(`INSERT OR IGNORE INTO events(event_id,case_id,action,detail,actor_type,actor_id,created_at) VALUES (${q(id + '-ev' + n)},${q(id)},${q(action)},${q(detail)},${q(actor[0])},${actor[1] === ADMIN ? ADMIN : q(actor[1])},${q(at)});`);
+cases.forEach(([client, type, docs, range, due, status, states], i) => {
+  const id = `demo-case-${String(i + 1).padStart(2, '0')}`, c = clients.find(x => x[0] === client), late = due < 7 && ['collecting', 'action_required'].includes(status);
+  out.push(`INSERT OR IGNORE INTO contacts(send_id,case_id,channel,actor_id,created_at) VALUES (${q(id + '-c1')},${q(id)},'email',${ADMIN},${q(day(-10) + 'T08:30:00.000Z')});`);
+  ev(id, 1, 'email_sent', 'פתיחת תיק · ' + c[4], day(-10) + 'T08:30:00.000Z');
+  ev(id, 2, 'client_opened', '', day(-9) + 'T17:12:00.000Z', ['client', client]);
+  docs.forEach(([doc, docName], j) => {
+    const st = states[j]; if (st === 'm') return;
+    const sid = `${id}-r${j + 1}-u1`;
+    files.push({ submission_id: sid, client: c[1], business_number: c[3], doc: docName, period: period(range), range, wrong_month: id === 'demo-case-09' && doc === 'sales' });
+    ev(id, 10 + j, 'upload_stored', docName + '.pdf', day(-4) + 'T1' + j + ':05:00.000Z', ['client', client]);
+    if (st === 'a') ev(id, 20 + j, 'approved', docName, day(-2) + 'T09:0' + j + ':00.000Z');
+    if (st === 'c') ev(id, 20 + j, 'correction', docName, day(-2) + 'T09:0' + j + ':00.000Z');
+  });
+  if (late) {
+    out.push(`INSERT OR IGNORE INTO contacts(send_id,case_id,channel,actor_id,created_at) VALUES (${q(id + '-c2')},${q(id)},'whatsapp',${ADMIN},${q(day(-2) + 'T10:00:00.000Z')});`);
+    ev(id, 30, 'contact', 'whatsapp', day(-2) + 'T10:00:00.000Z');
+  }
+});
+writeFileSync(new URL('./demo-files.json', import.meta.url), JSON.stringify(files, null, 1) + '\n');
 // Added 2026-10-01: each file gets a contact person and a regular document list. Only fills files that have none yet.
 const contacts = {
   'demo-cl-01': ['אורי זית', 'monthly'], 'demo-cl-02': ['רונית כהן', 'ct-vat-period'], 'demo-cl-03': ['שי גפני', 'monthly'],

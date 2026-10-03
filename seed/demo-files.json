@@ -1,0 +1,374 @@
+[
+ {
+  "submission_id": "demo-case-01-r1-u1",
+  "client": "נגריית עץ הזית בע״מ",
+  "business_number": "514839201",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-03-r1-u1",
+  "client": "מסעדת הגפן",
+  "business_number": "515002331",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-03-r2-u1",
+  "client": "מסעדת הגפן",
+  "business_number": "515002331",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-05-r1-u1",
+  "client": "סטודיו תנועה – מיכל ברק",
+  "business_number": "039988776",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-05-r2-u1",
+  "client": "סטודיו תנועה – מיכל ברק",
+  "business_number": "039988776",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-05-r3-u1",
+  "client": "סטודיו תנועה – מיכל ברק",
+  "business_number": "039988776",
+  "doc": "תדפיס בנק",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-06-r1-u1",
+  "client": "אלקטרו-גל מערכות בע״מ",
+  "business_number": "516677889",
+  "doc": "אישור יתרות שנתי",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-06-r2-u1",
+  "client": "אלקטרו-גל מערכות בע״מ",
+  "business_number": "516677889",
+  "doc": "תדפיס בנק",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-07-r1-u1",
+  "client": "יוסי מזרחי – שיפוצים",
+  "business_number": "024455667",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-07-r2-u1",
+  "client": "יוסי מזרחי – שיפוצים",
+  "business_number": "024455667",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-07-r3-u1",
+  "client": "יוסי מזרחי – שיפוצים",
+  "business_number": "024455667",
+  "doc": "תדפיס בנק",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-08-r1-u1",
+  "client": "עמותת יד לקהילה",
+  "business_number": "580123456",
+  "doc": "אישור יתרות שנתי",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-08-r2-u1",
+  "client": "עמותת יד לקהילה",
+  "business_number": "580123456",
+  "doc": "תדפיס בנק",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-09-r1-u1",
+  "client": "נועה שפירא – צילום",
+  "business_number": "035566778",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-09-r2-u1",
+  "client": "נועה שפירא – צילום",
+  "business_number": "035566778",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": true
+ },
+ {
+  "submission_id": "demo-case-10-r1-u1",
+  "client": "מאפה השכונה בע״מ",
+  "business_number": "517788990",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-10-r2-u1",
+  "client": "מאפה השכונה בע״מ",
+  "business_number": "517788990",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-10-r3-u1",
+  "client": "מאפה השכונה בע״מ",
+  "business_number": "517788990",
+  "doc": "תדפיס בנק",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-11-r1-u1",
+  "client": "נגריית עץ הזית בע״מ",
+  "business_number": "514839201",
+  "doc": "אישור יתרות שנתי",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-11-r2-u1",
+  "client": "נגריית עץ הזית בע״מ",
+  "business_number": "514839201",
+  "doc": "תדפיס בנק",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-12-r1-u1",
+  "client": "מסעדת הגפן",
+  "business_number": "515002331",
+  "doc": "אישור יתרות שנתי",
+  "period": "2025",
+  "range": [
+   "2025-01-01",
+   "2025-12-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-13-r2-u1",
+  "client": "אלקטרו-גל מערכות בע״מ",
+  "business_number": "516677889",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-14-r1-u1",
+  "client": "רונית כהן – עיצוב פנים",
+  "business_number": "032145678",
+  "doc": "מסמכי הוצאות",
+  "period": "07/2026",
+  "range": [
+   "2026-07-01",
+   "2026-07-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-14-r2-u1",
+  "client": "רונית כהן – עיצוב פנים",
+  "business_number": "032145678",
+  "doc": "דוח מכירות",
+  "period": "07/2026",
+  "range": [
+   "2026-07-01",
+   "2026-07-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-14-r3-u1",
+  "client": "רונית כהן – עיצוב פנים",
+  "business_number": "032145678",
+  "doc": "תדפיס בנק",
+  "period": "07/2026",
+  "range": [
+   "2026-07-01",
+   "2026-07-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-16-r1-u1",
+  "client": "ד״ר אבי לוי – מרפאת שיניים",
+  "business_number": "028877665",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-16-r2-u1",
+  "client": "ד״ר אבי לוי – מרפאת שיניים",
+  "business_number": "028877665",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-16-r3-u1",
+  "client": "ד״ר אבי לוי – מרפאת שיניים",
+  "business_number": "028877665",
+  "doc": "תדפיס בנק",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-17-r1-u1",
+  "client": "עמותת יד לקהילה",
+  "business_number": "580123456",
+  "doc": "מסמכי הוצאות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-17-r2-u1",
+  "client": "עמותת יד לקהילה",
+  "business_number": "580123456",
+  "doc": "דוח מכירות",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ },
+ {
+  "submission_id": "demo-case-17-r3-u1",
+  "client": "עמותת יד לקהילה",
+  "business_number": "580123456",
+  "doc": "תדפיס בנק",
+  "period": "08/2026",
+  "range": [
+   "2026-08-01",
+   "2026-08-31"
+  ],
+  "wrong_month": false
+ }
+]

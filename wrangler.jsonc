@@ -10,6 +10,8 @@
     "database_id": "d28d6acc-a8a9-468c-a0f7-b6785b995f38",
     "migrations_dir": "migrations"
   }],
+  // A copy of every uploaded file, so the office can see it inside the case page. Drive stays the record.
+  "kv_namespaces": [{ "binding": "FILES", "id": "c2388b36c54146cfab5e5fd168566234" }],
   "vars": {
     "PORTAL_BRIDGE_ENABLED": "true"
   },
