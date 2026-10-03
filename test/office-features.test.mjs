@@ -343,3 +343,28 @@ test('the client opening the link is recorded, once every few hours', async () =
   await call(e, '/api/portal', { auth: 'none', caseToken: tok });
   assert.equal(db.raw.prepare("SELECT count(*) n FROM events WHERE case_id='case1' AND action='client_opened'").get().n, 1);
 });
+
+test('an email is sent once per send_id, an unknown outcome is not resent blindly, and the subject has no line breaks', async t => {
+  const db = await seed(), store = new Map(), FILES = { get: async k => store.get(k) ?? null, put: async (k, v) => store.set(k, v), delete: async k => store.delete(k) };
+  const e = { ...env(db), FILES, MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test', MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_BRIDGE_ENABLED: 'true' };
+  db.raw.prepare("UPDATE clients SET email='dana@example.com' WHERE client_id='cl1'").run();
+  db.raw.prepare("UPDATE cases SET name=? WHERE case_id='case1'").run('Monthly\r\nBcc: x@example.com');
+  let sent = [], mode = 'ok';
+  t.mock.method(globalThis, 'fetch', async (url, init) => { const f = init.body; sent.push(Object.fromEntries(f)); if (mode === 'lost') throw new Error('timeout'); return new Response(JSON.stringify(mode === 'refuse' ? { status: 'accepted' } : { status: 'sent', send_id: f.get('send_id') })); });
+  const id = crypto.randomUUID();
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: id } })).body.sent, true);
+  assert.doesNotMatch(sent[0].subject, /[\r\n]/);
+  // The same message again: no second email.
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: id } })).body.repeat, true);
+  assert.equal(sent.length, 1);
+  // Make's answer is lost: the office is told it may have gone out, and the same id is not sent again.
+  mode = 'lost'; const lost = crypto.randomUUID();
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: lost } })).body.error, 'email_maybe_sent');
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: lost } })).body.error, 'email_maybe_sent');
+  assert.equal(sent.length, 2);
+  // Make clearly did not send: the same id may try again.
+  mode = 'refuse'; const refused = crypto.randomUUID();
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: refused } })).body.error, 'email_failed');
+  mode = 'ok';
+  assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: refused } })).body.sent, true);
+});

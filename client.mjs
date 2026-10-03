@@ -12,6 +12,8 @@ let current,openMissing=null,openNote=null;
 const sending=new Map();
 // A short note to the office, typed before the next file of that document.
 const notes=new Map();
+// Files that did not go out yet (the office was still saving an earlier one, or the connection failed). One tap sends them.
+const leftover=new Map();
 async function load(){try{current=await call('/api/portal');}catch(e){if(['pin_required','wrong_pin'].includes(e.code)){pinForm(e.code==='wrong_pin'?e.message:'');return;}throw e;}render(current);}
 
 // Four boxes, a number keypad, and the page opens by itself after the fourth digit.
@@ -44,7 +46,7 @@ function todoRow(r,locked){const id=r.requirement_id,s=sending.get(id),fix=r.sta
  return `<li class="doc-item todo${fix?' fix':''}" id="req-${esc(id)}">
 <div class="doc-line"><strong>${esc(r.name)}</strong>${r.required?'':'<small class="muted">לא חובה</small>'}</div>
 ${fix&&r.correction_message?`<p class="fix-note"><strong>הערה מהמשרד:</strong> ${esc(r.correction_message)}</p>`:''}
-${s?`<p class="sending-line" role="status">${s.timer?'נשלח':'שולח'}: ${esc(s.files.map(f=>f.name).join(', '))}${s.timer?` <button type="button" class="text-button" data-cancel="${esc(id)}">ביטול</button>`:'…'}</p>`
+${!s&&leftover.get(id)?.length&&!pendingSave(r)?`<p class="sending-line" role="status">עוד ${leftover.get(id).length===1?'קובץ אחד לא נשלח':leftover.get(id).length+' קבצים לא נשלחו'}: ${esc(leftover.get(id).map(f=>f.name).join(', '))} <button type="button" class="text-button" data-resume="${esc(id)}">שליחה</button></p>`:''}${s?`<p class="sending-line" role="status">${s.timer?'נשלח':'שולח'}: ${esc(s.files.map(f=>f.name).join(', '))}${s.timer?` <button type="button" class="text-button" data-cancel="${esc(id)}">ביטול</button>`:'…'}</p>`
  :pendingSave(r)?'<p class="sending-line">הקובץ נשמר אצל המשרד. אין צורך לשלוח שוב.</p>'
  :canAdd(r,locked)?pickers(r,fix?'צילום הקובץ המתוקן':'צילום')+noteLine(r):''}
 ${!locked&&!fix&&r.required&&!s&&!pendingSave(r)?(openMissing===id?`<form class="missing-form" data-missing-form="${esc(id)}" novalidate><label>למה אין לך את המסמך?<textarea data-missing-note="${esc(id)}" maxlength="500" rows="2" required placeholder="לדוגמה: לא עבדתי השנה כשכיר"></textarea></label><p class="error" id="missing-error-${esc(id)}" aria-live="polite"></p><div class="doc-actions"><button class="primary">שליחת ההסבר למשרד</button><button type="button" data-missing-cancel="${esc(id)}">ביטול</button></div></form>`:`<button type="button" class="text-button small" data-missing="${esc(id)}">אין לי את המסמך הזה</button>`):''}
@@ -53,7 +55,7 @@ ${!locked&&!fix&&r.required&&!s&&!pendingSave(r)?(openMissing===id?`<form class=
 function doneRow(r,locked){const id=r.requirement_id,files=r.uploads.filter(u=>u.state==='stored');
  return `<li class="doc-item done" id="req-${esc(id)}"><div class="doc-line"><strong><span aria-hidden="true">✓</span> ${esc(r.name)}</strong><small>${noFile(r)?'סימנת שאין לך':esc(clientStatus[r.status]||status[r.status])}</small></div>
 ${noFile(r)?`<p class="muted">${esc(r.unavailable_note||'')}</p>${locked?'':`<button type="button" class="text-button small" data-undo-missing="${esc(id)}">ביטול: יש לי את המסמך</button>`}`:`<p class="muted files">${files.map(u=>esc(u.filename)).join(' · ')}</p>`}
-${!noFile(r)&&canAdd(r,locked)?`<details class="more-files"><summary>＋ עוד קובץ</summary>${pickers(r)}</details>`:''}
+${leftover.get(id)?.length&&!pendingSave(r)?`<p class="sending-line" role="status">עוד ${leftover.get(id).length===1?'קובץ אחד לא נשלח':leftover.get(id).length+' קבצים לא נשלחו'}: ${esc(leftover.get(id).map(f=>f.name).join(', '))} <button type="button" class="text-button" data-resume="${esc(id)}">שליחה</button></p>`:''}${!noFile(r)&&canAdd(r,locked)?`<details class="more-files"><summary>＋ עוד קובץ</summary>${pickers(r)}</details>`:''}
 <p class="upload-status" role="status" id="status-${esc(id)}"></p></li>`;}
 
 function render(c){if(c.closed){app.innerHTML=`<section class="panel card"><h1>${esc(c.name)}</h1><p>התיק הושלם, ולכן המסמכים לא מוצגים כאן. לשאלות אפשר לפנות למשרד.</p></section>`;return;}
@@ -76,6 +78,7 @@ function bind(c){
   if(picked.length>room(r)){setStatus(id,room(r)===1?'אפשר לשלוח כאן קובץ אחד.':`אפשר לשלוח כאן עוד ${room(r)} קבצים.`);return;}
   const s={files:picked,note:(notes.get(id)||'').trim(),timer:null};s.timer=setTimeout(()=>{s.timer=null;send(id);},UNDO_MS);sending.set(id,s);openNote=null;rerender(`[data-cancel="${CSS.escape(id)}"]`);});
  document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>{const id=b.dataset.cancel,s=sending.get(id);if(s?.timer){clearTimeout(s.timer);sending.delete(id);rerender();setStatus(id,'בוטל. הקובץ לא נשלח.');}});
+ document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>{const id=b.dataset.resume,files=leftover.get(id)||[];leftover.delete(id);if(files.length){sending.set(id,{files,note:(notes.get(id)||'').trim(),timer:null});send(id);}});
  document.querySelectorAll('[data-open-note]').forEach(b=>b.onclick=()=>{openNote=b.dataset.openNote;rerender(`[data-note="${CSS.escape(openNote)}"]`);});
  document.querySelectorAll('[data-note]').forEach(t=>t.oninput=()=>notes.set(t.dataset.note,t.value));
  document.querySelectorAll('[data-missing]').forEach(b=>b.onclick=()=>{openMissing=b.dataset.missing;rerender(`[data-missing-note="${CSS.escape(openMissing)}"]`);});
@@ -95,12 +98,12 @@ async function send(id){const s=sending.get(id);if(!s)return;rerender();let wait
    const storageKey='upload:'+[id,file.name,file.size,file.lastModified,note].join(':');let sid=sessionStorage.getItem(storageKey);if(!sid){sid=crypto.randomUUID();sessionStorage.setItem(storageKey,sid);}
    const data=new FormData();data.set('file',file);data.set('requirement_id',id);data.set('submission_id',sid);if(note)data.set('client_note',note);
    const result=await call('/api/portal/uploads',data);
-   if(result.status!=='stored'){waiting=true;break;}
+   if(result.status!=='stored'){waiting=true;s.files.shift();break;}
    sessionStorage.removeItem(storageKey);s.files.shift();s.note='';notes.delete(id);}}
  catch(e){failed=e.message;}
- sending.delete(id);
+ sending.delete(id);if(s.files.length)leftover.set(id,s.files);
  try{current=await call('/api/portal');}catch{}
- render(current);setStatus(id,failed?failed+' אפשר לנסות שוב.':waiting?'הקובץ נשמר אצל המשרד. אין צורך לשלוח שוב.':'נשלח למשרד ✓');
+ render(current);setStatus(id,failed?failed+' אפשר לנסות שוב.':waiting?'הקובץ נשמר אצל המשרד. אין צורך לשלוח אותו שוב.':'נשלח למשרד ✓');
  if(!failed&&current.status==='client_completed')window.scrollTo({top:0,behavior:'smooth'});}
 
 // A short link (#Ab3xK9Qz1a) asks the worker for the full token once, then the page opens as usual.
