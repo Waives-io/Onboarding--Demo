@@ -320,3 +320,26 @@ test('a short link opens the right case, stops with a revoke, and is rate-limite
   for (let i = 0; i < 60; i++) await call(e, '/api/short/AAAAAAAAAA', { auth: 'none' });
   assert.equal((await call(e, '/api/short/' + revoked.split('#')[1], { auth: 'none' })).status, 429);
 });
+
+test('the office sees a stored file inside the page; nobody else does', async () => {
+  const db = await seed(), store = new Map(), FILES = { get: async (k) => store.get(k) ?? null, put: async (k, v) => store.set(k, v) };
+  const e = { ...env(db), FILES };
+  db.raw.prepare("INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state) VALUES ('s1','r1','דוח.pdf','application/pdf',10,'h',1,'stored'),('s2','r2','b.png','image/png',10,'h',1,'stored')").run();
+  store.set('file:s1', new TextEncoder().encode('%PDF-1.4 demo').buffer);
+  const r = await call(e, '/api/files/s1');
+  assert.equal(r.status, 200);
+  assert.equal(r.res.headers.get('content-type'), 'application/pdf');
+  assert.equal(r.res.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(new TextDecoder().decode(await r.res.arrayBuffer()), '%PDF-1.4 demo');
+  // A file with no copy says so, a client link opens nothing here, and an unknown id is not found.
+  assert.equal((await call(e, '/api/files/s2')).body.error, 'no_preview');
+  assert.equal((await call(e, '/api/files/s1', { auth: 'none', caseToken: await caseToken('case1', KEY) })).status, 401);
+  assert.equal((await call(e, '/api/files/nope')).status, 404);
+});
+
+test('the client opening the link is recorded, once every few hours', async () => {
+  const db = await seed(), e = env(db), tok = await caseToken('case1', KEY);
+  await call(e, '/api/portal', { auth: 'none', caseToken: tok });
+  await call(e, '/api/portal', { auth: 'none', caseToken: tok });
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM events WHERE case_id='case1' AND action='client_opened'").get().n, 1);
+});

@@ -411,3 +411,16 @@ button.accent:hover { background: rgba(255,218,42,.10); }
 .quiet-defaults { margin: 14px 0 6px; color: var(--muted); }
 .quiet-defaults .text-button { min-height: 36px; padding: 0 2px; color: var(--violet); text-decoration: underline; }
 #due-field[hidden] { display: none; }
+
+/* Case page: one status line instead of three numbers, and the document itself inside its card. */
+.case-status-line { display: grid; grid-template-columns: minmax(200px, 1fr) auto auto; align-items: center; gap: 18px; margin: 16px 0 20px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.case-status-line .progress-label { margin: 0 0 6px; }
+.case-status-line .due, .case-status-line .waiting { font-weight: 700; white-space: nowrap; }
+.case-status-line .waiting { color: var(--blue); }
+.doc-preview { margin: 12px 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #0d0d0f; }
+.doc-preview[hidden] { display: none; }
+.doc-preview iframe { display: block; width: 100%; height: min(70vh, 640px); border: 0; background: #fff; }
+.doc-preview img { display: block; max-width: 100%; max-height: 70vh; margin: auto; }
+.doc-preview p { margin: 0; padding: 14px; }
+#correction .choice-chips { margin-bottom: 12px; }
+@media (max-width: 720px) { .case-status-line { grid-template-columns: 1fr auto; } .case-status-line .waiting { grid-column: 1 / -1; } .doc-preview iframe { height: 60vh; } }

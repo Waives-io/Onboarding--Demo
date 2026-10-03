@@ -244,7 +244,9 @@ async function handle(req,env) {
   return new Response(Uint8Array.from(atob(l.data),ch=>ch.charCodeAt(0)),{headers:{'Content-Type':l.mime,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff'}});}
  if(path.startsWith('/api/portal')) {
  const c=await portal(req,db);
- if(path==='/api/portal'&&method==='GET'){if(['closed','archived'].includes(c.status))return {closed:true,status:c.status,name:c.name,client_name:c.client_name,contact_name:c.contact_name,requirements:[]};await expirePending(db,c.case_id);return caseView(db,c.case_id);}
+ if(path==='/api/portal'&&method==='GET'){if(['closed','archived'].includes(c.status))return {closed:true,status:c.status,name:c.name,client_name:c.client_name,contact_name:c.contact_name,requirements:[]};await expirePending(db,c.case_id);
+  await stmt(db,"INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,'client_opened','','client',? WHERE NOT EXISTS(SELECT 1 FROM events WHERE case_id=? AND action='client_opened' AND created_at>?)",uid(),c.case_id,c.client_id,c.case_id,new Date(Date.now()-21600000).toISOString()).run();
+  return caseView(db,c.case_id);}
  active(c);
  if(path==='/api/portal/complete'&&method==='POST') {
  const missing=await one(db,"SELECT count(*) AS n FROM requirements WHERE case_id=? AND (status='correction' OR (required=1 AND status NOT IN ('uploaded','approved') AND unavailable_note IS NULL))",c.case_id);
@@ -293,6 +295,7 @@ async function handle(req,env) {
  let claimed;try{claimed=(await stmt(db,"INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,client_note) SELECT ?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM requirements WHERE requirement_id=? AND status!='approved')",submission,rid,f.filename,f.mime,f.size,f.contentHash,version,note||null,rid).run()).meta.changes===1;}catch{throw new HttpError(409,'upload_pending');}
  requireThat(claimed,'already_approved',409);
  const u=await one(db,'SELECT * FROM uploads WHERE submission_id=?',submission);
+ if(env.FILES)await env.FILES.put('file:'+submission,await file.arrayBuffer(),{metadata:{mime:f.mime,filename:f.filename},expirationTtl:15552000}).catch(()=>{});
  const payload=new FormData();for(const [k,v]of Object.entries({action:r.drive_folder_id?'upload_document_revision':'upload_document',submission_id:submission,client_id:c.client_id,client_reference:c.client_reference,full_name:c.client_name,email:c.client_email,case_id:c.case_id,requirement_id:rid,requirement_name:r.name,reporting_period:c.reporting_period,version:String(version),filename:f.filename,content_hash:f.contentHash,requirement_folder_id:r.drive_folder_id||'',note:r.drive_folder_id||''}))payload.set(k,v);
  payload.set('file_1',file,f.filename);
  const waiting={submission_id:submission,status:'pending',message:'ממתין לאישור שמירה. אין להעלות שוב.'};
@@ -379,6 +382,10 @@ async function handle(req,env) {
   let bin='';for(const x of bytes)bin+=String.fromCharCode(x);
   await db.batch([stmt(db,'INSERT INTO logo(id,mime,data) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data',mime,btoa(bin)),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
  if(path==='/api/clients'&&method==='POST'){const b=await body(req),id=uid();return {client_id:id,reference:await insertClient(db,id,b,me.staff_id)};}
+ if(path.startsWith('/api/files/')&&method==='GET'){const sid=path.slice(11);requireThat(/^[\w-]{1,80}$/.test(sid),'not_found',404);
+  const u=await one(db,'SELECT u.submission_id,u.filename,u.mime_type,r.case_id FROM uploads u JOIN requirements r USING(requirement_id) WHERE u.submission_id=?',sid);requireThat(u,'not_found',404);await ownCase(db,me,u.case_id);
+  const file=env.FILES?await env.FILES.get('file:'+sid,'arrayBuffer'):null;requireThat(file,'no_preview',404);
+  return new Response(file,{headers:{'Content-Type':u.mime_type,'Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff','Content-Disposition':"inline; filename*=UTF-8''"+encodeURIComponent(u.filename)}});}
  if(path==='/api/cases'&&method==='GET'){const scope=isAdmin(me)?'':' WHERE c.owner_id=?',args=isAdmin(me)?[]:[me.staff_id];return all(db,`SELECT c.*,cl.name client_name,cl.reference,cl.business_number,cl.email,cl.phone,st.name owner_name,${contactSql('c')},(SELECT count(*) FROM requirements WHERE case_id=c.case_id) total,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status IN ('uploaded','approved')) received,(SELECT group_concat(name,' • ') FROM requirements WHERE case_id=c.case_id AND (status='correction' OR status='missing' AND required=1 AND unavailable_note IS NULL)) missing,(SELECT count(*) FROM requirements WHERE case_id=c.case_id AND status='missing' AND unavailable_note IS NOT NULL) unavailable,(SELECT count(*) FROM requirements r WHERE r.case_id=c.case_id AND r.status='uploaded' AND EXISTS(SELECT 1 FROM uploads u WHERE u.requirement_id=r.requirement_id AND u.state='stored') AND NOT EXISTS(SELECT 1 FROM uploads u WHERE u.requirement_id=r.requirement_id AND u.state='pending')) reviewable_count FROM cases c JOIN clients cl USING(client_id) LEFT JOIN staff st ON st.staff_id=c.owner_id${scope} ORDER BY c.last_activity DESC`,...args).then(async rows=>{const s=await settings(db),today=localDate(),reqs=await all(db,`SELECT r.case_id,r.required,r.status,r.unavailable_note FROM requirements r JOIN cases c USING(case_id)${scope}`,...args);
   return rows.map(({token_hash,link_version,...r})=>({...r,...caseMeta(r,reqs.filter(x=>x.case_id===r.case_id),s,today),whatsapp:israeliMobile(r.phone)}));});}
  if(path==='/api/cases'&&method==='POST'){const b=await body(req);
@@ -459,5 +466,8 @@ export default {async fetch(req,env){const path=new URL(req.url).pathname;
  const localOrigin=localTarget && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
  if(origin && origin!==ORIGIN && !localOrigin)return reply({error:'origin_denied'},403);
  if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin===ORIGIN?ORIGIN:localOrigin?origin:ORIGIN,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Case-Token, X-Case-Pin','Vary':'Origin'}});
- try{const out=await handle(req,env);return out instanceof Response?out:reply(out,200,origin);}catch(e){return reply({error:e instanceof HttpError?e.message:'internal_error'},e instanceof HttpError?e.status:500,origin);}
+ try{const out=await handle(req,env);
+  // Files and the logo are raw responses; the page reads files with fetch, so they carry the same CORS answer as JSON.
+  if(out instanceof Response){if(origin){out.headers.set('Access-Control-Allow-Origin',origin);out.headers.append('Vary','Origin');}return out;}
+  return reply(out,200,origin);}catch(e){return reply({error:e instanceof HttpError?e.message:'internal_error'},e instanceof HttpError?e.status:500,origin);}
 }};
