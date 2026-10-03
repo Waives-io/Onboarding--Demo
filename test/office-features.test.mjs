@@ -290,3 +290,13 @@ test('opening and reminder emails go through Make and are recorded only when Mak
   assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening' } })).body.error, 'invalid_email');
   assert.equal(sent.length, before);
 });
+
+test('the case list says how many documents wait for review, so the board can group cases', async () => {
+  const db = await seed(), e = env(db);
+  const count = async () => (await call(e, '/api/cases')).body.find(c => c.case_id === 'case1').reviewable_count;
+  assert.equal(await count(), 0);
+  db.raw.prepare("UPDATE requirements SET status='uploaded' WHERE requirement_id IN ('r1','r2')").run();
+  db.raw.prepare("INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state) VALUES ('s1','r1','a.pdf','application/pdf',10,'h',1,'stored'),('s2','r2','b.pdf','application/pdf',10,'h',1,'pending')").run();
+  // Only a stored file with nothing still saving counts.
+  assert.equal(await count(), 1);
+});
