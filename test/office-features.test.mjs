@@ -29,6 +29,8 @@ async function call(e, path, { method = 'GET', data, auth = 'office', caseToken:
   const res = await worker.fetch(new Request('https://worker.example' + path, { method, headers, body }), e);
   return { status: res.status, res, body: res.headers.get('content-type')?.includes('json') ? await res.json() : null };
 }
+// The client link is short: client.html#<10 letters>. The worker turns the code into the full token.
+const tokenOf = async (e, link) => (await call(e, '/api/short/' + link.split('#')[1], { auth: 'none' })).body.token;
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
 
 test('case list carries progress, deadline and a WhatsApp number', async () => {
@@ -94,11 +96,12 @@ test('revoking a link locks out the old one and the new one works', async () => 
   const old = await caseToken('case1', KEY);
   assert.equal((await call(e, '/api/portal', { auth: 'none', caseToken: old })).status, 200);
   const r = await call(e, '/api/cases/case1/revoke-link', { method: 'POST', data: {} });
-  const fresh = r.body.link.split('#')[1];
+  const fresh = await tokenOf(e, r.body.link);
   assert.notEqual(fresh, old);
   assert.equal((await call(e, '/api/portal', { auth: 'none', caseToken: old })).status, 401);
   assert.equal((await call(e, '/api/portal', { auth: 'none', caseToken: fresh })).status, 200);
-  assert.equal((await call(e, '/api/cases/case1/link')).body.link.split('#')[1], fresh);
+  assert.equal((await call(e, '/api/cases/case1/link')).body.link, r.body.link);
+  assert.equal(await tokenOf(e, (await call(e, '/api/cases/case1/link')).body.link), fresh);
 });
 
 test('client portal gets progress but not office-only fields', async () => {
@@ -179,7 +182,8 @@ test('a case loaded without a link gets one the first time the office asks', asy
   db.raw.prepare("INSERT INTO requirements(requirement_id,case_id,name,required,max_files,position) VALUES ('s1','seeded','Bank',1,1,0)").run();
   const first = (await call(e, '/api/cases/seeded/link')).body.link;
   assert.equal((await call(e, '/api/cases/seeded/link')).body.link, first);
-  const token = first.split('#')[1];
+  assert.match(first, /client\.html#[A-Za-z0-9]{10}$/);
+  const token = await tokenOf(e, first);
   const portal = await call(e, '/api/portal', { auth: 'none', caseToken: token });
   assert.equal(portal.status, 200);
   assert.equal(portal.body.name, 'Seeded');
@@ -248,9 +252,8 @@ test('a new case has its own opening message, separate from the reminder', async
   assert.equal(r.status, 200);
   const lines = r.body.text.split('\n');
   assert.equal(lines[0], 'שלום Test Client,');
-  assert.equal(lines[1], 'פתחנו עבורך תיק: Monthly.');
-  assert.deepEqual(lines.slice(3, 5), ['• Bank', '• Sales']);
-  assert.match(r.body.text, /להעלאת המסמכים: https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[0-9a-f]{64}\nעד 04\/10\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.\nמשרד כהן$/);
+  assert.equal(lines[1], 'פתחנו לך תיק Monthly. נצטרך: Bank, Sales');
+  assert.match(r.body.text, /להעלאה: https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}\nעד 04\/10\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.\nמשרד כהן$/);
   // The office's reminder wording never leaks into the opening message, and opening it records no reminder.
   assert.doesNotMatch(r.body.text, /תזכורת/);
   const view = await call(e, '/api/cases/case1');
@@ -268,13 +271,13 @@ test('opening and reminder emails go through Make and are recorded only when Mak
   const [m] = sent;
   assert.equal(m.action, 'send_email'); assert.equal(m.bridge_key, 'k'.repeat(32)); assert.equal(m.to, 'dana@example.com'); assert.equal(m.reply_to, 'office@example.com');
   assert.equal(m.subject, 'מסמכים לתיק Monthly · משרד כהן');
-  assert.match(m.html, /^<div dir="rtl"/); assert.match(m.html, /שלום דנה,<br>פתחנו עבורך תיק: Monthly\./); assert.match(m.html, /href="https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[0-9a-f]{64}"/);
+  assert.match(m.html, /^<div dir="rtl"/); assert.match(m.html, /שלום דנה,<br>פתחנו לך תיק Monthly\. נצטרך: Bank, Sales/); assert.match(m.html, /href="https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}"/);
   let view = (await call(e, '/api/cases/case1')).body;
   assert.equal(view.contact_count, 1); assert.equal(view.last_channel, 'email');
   assert.equal(view.events.find(x => x.action === 'email_sent').detail, 'פתיחת תיק · dana@example.com');
   // A reminder email names only what is missing.
   await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'reminder' } });
-  assert.equal(sent[1].subject, 'תזכורת: מסמכים לתיק Monthly · משרד כהן'); assert.match(sent[1].html, /• Bank/);
+  assert.equal(sent[1].subject, 'תזכורת: מסמכים לתיק Monthly · משרד כהן'); assert.match(sent[1].html, /חסר לתיק Monthly: Bank, Sales/);
   // Make answers without a confirmation (an error in Gmail): nothing is recorded and the office is told.
   reply = () => ({ status: 'accepted' });
   const bad = await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening' } });
@@ -299,4 +302,21 @@ test('the case list says how many documents wait for review, so the board can gr
   db.raw.prepare("INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state) VALUES ('s1','r1','a.pdf','application/pdf',10,'h',1,'stored'),('s2','r2','b.pdf','application/pdf',10,'h',1,'pending')").run();
   // Only a stored file with nothing still saving counts.
   assert.equal(await count(), 1);
+});
+
+test('a short link opens the right case, stops with a revoke, and is rate-limited', async () => {
+  const db = await seed(), e = env(db);
+  const link = (await call(e, '/api/cases/case1/link')).body.link;
+  assert.match(link, /^https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}$/);
+  assert.equal(await tokenOf(e, link), await caseToken('case1', KEY));
+  // The default reminder is four lines (plus the PIN hint): hello, what is missing, the link, until when.
+  db.raw.prepare("UPDATE cases SET due_date='2026-10-04' WHERE case_id='case1'").run();
+  const text = (await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text.split('\n');
+  assert.deepEqual(text, ['שלום Test Client,', 'חסר לתיק Monthly: Bank, Sales', 'להעלאה: ' + link, 'עד 04/10', 'לכניסה: 4 הספרות האחרונות של הנייד שלך.']);
+  const revoked = (await call(e, '/api/cases/case1/revoke-link', { method: 'POST', data: {} })).body.link;
+  assert.notEqual(revoked, link);
+  assert.equal((await call(e, '/api/short/' + link.split('#')[1], { auth: 'none' })).status, 404);
+  assert.equal((await call(e, '/api/short/abc', { auth: 'none' })).status, 404);
+  for (let i = 0; i < 60; i++) await call(e, '/api/short/AAAAAAAAAA', { auth: 'none' });
+  assert.equal((await call(e, '/api/short/' + revoked.split('#')[1], { auth: 'none' })).status, 429);
 });
