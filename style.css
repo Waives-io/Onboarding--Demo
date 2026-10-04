@@ -38,7 +38,7 @@ body { min-height: 100vh; margin: 0; color: var(--text); font-size: 15px; line-h
 button, input, select, textarea { font: inherit; }
 a { color: var(--violet); text-underline-offset: 3px; }
 h1, h2, h3, p { margin-top: 0; }
-h1 { margin-bottom: 10px; color: var(--text); font-size: clamp(2.1rem, 5vw, 4.25rem); font-weight: 800; line-height: 1.04; letter-spacing: -.035em; }
+h1 { margin-bottom: 10px; color: var(--text); font-size: clamp(1.7rem, 2.6vw, 2.4rem); font-weight: 800; line-height: 1.04; letter-spacing: -.035em; }
 h1:not(.brand h1) { width: fit-content; max-width: 100%; background: var(--headline); background-clip: text; -webkit-background-clip: text; color: transparent; }
 h2 { font-size: 1.42rem; font-weight: 700; }
 h3 { font-size: 1.08rem; font-weight: 700; }
@@ -265,7 +265,8 @@ dialog::backdrop { background: rgba(13,13,15,.82); }
   .client-page { max-width: none; padding-top: 103px; }
   .welcome { margin-top: -18px; margin-bottom: 16px; padding: 45px 14px 24px; }
   .client-head { margin-top: -18px; margin-bottom: 14px; padding: 42px 14px 22px; }
-  .welcome h1, .client-head h1 { font-size: clamp(2rem,10vw,3rem); }
+  .welcome h1, .client-head h1 { font-size: clamp(1.6rem,7.5vw,2.1rem); }
+  .home .welcome h1 { font-size: clamp(2rem,10vw,3rem); }
   .page-heading { flex-direction: column; gap: 14px; }
   .page-heading .actions, .page-heading > button { width: 100%; }
   .page-heading .actions > * { flex: 1; }

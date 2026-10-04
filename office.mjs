@@ -215,7 +215,7 @@ ${isAdmin()&&chosen()&&k.items.some(i=>i.added&&i.on)?`<label class="save-type">
   const items=k.items.filter(i=>i.on);if(!items.length)throw new Error('יש לבחור לפחות מסמך אחד.');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(k.due))throw new Error('תאריך היעד אינו תקין.');
   const t=chosen(),[period_start,period_end]=k.period.split('|');
-  const r=await call('/api/cases',{client_id:client.client_id,name:[t?.name||'איסוף מסמכים',periodLabel(period_start,period_end)].filter(Boolean).join(' · '),type:t?.name||'אחר',period_start,period_end,due_date:k.due,
+  const r=await call('/api/cases',{client_id:client.client_id,name:[t?.name||'איסוף מסמכים',periodLabel(period_start,period_end)].filter(Boolean).join(' '),type:t?.name||'אחר',period_start,period_end,due_date:k.due,
    requirements:items.map(i=>({...(i.document_id?{document_id:i.document_id}:{}),name:i.name,required:i.required!==false,max_files:i.max_files}))});
   // Documents added here join the case type when the admin ticks the box. The case is already open either way.
   const added=items.filter(i=>i.added);

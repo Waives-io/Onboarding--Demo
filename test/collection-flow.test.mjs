@@ -179,7 +179,7 @@ test('an inquiry with a ready document list opens the client and the case by its
   // One email to the client with the link and the list, one alert to the office.
   const toClient = sent.find(m => m.to === 'dana@example.co'), toOffice = sent.find(m => m.to === 'office@example.com');
   assert.match(toClient.html, /פתחנו לך תיק/); assert.equal(toClient.reply_to, 'office@example.com');
-  assert.match(toOffice.subject, /^תיק חדש מדף הנחיתה: נגריית הזית/); assert.equal(toOffice.reply_to, 'dana@example.co');
+  assert.equal(toOffice.subject, 'מסמכים בזמן · השאירו פרטים: נגריית הזית'); assert.equal(toOffice.reply_to, 'dana@example.co');
   assert.equal((await call(e, '/api/inquiries')).body.length, 0);
   const view = (await call(e, '/api/cases/' + c.case_id)).body;
   assert.ok(view.events.some(x => x.action === 'case_from_inquiry')); assert.equal(view.contact_count, 1);
@@ -190,6 +190,10 @@ test('an inquiry with a ready document list opens the client and the case by its
   // Same mobile with another email is a new client, so a stranger never reaches an existing client's case.
   const other = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, email: 'x@example.com', need: 'annual_selfemployed' } })).body;
   assert.notEqual(other.link, r.link);
+  // Same mobile and email under another name is also a new client.
+  const renamed = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, name: 'שרוליק', contact_name: 'שרוליק', need: 'annual_selfemployed' } })).body;
+  assert.notEqual(renamed.link, r.link);
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM clients WHERE name='שרוליק'").get().n, 1);
   // Something else: a confirmation to the client, and the inquiry waits for the office.
   sent.length = 0;
   const wait = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other' } })).body;

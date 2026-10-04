@@ -204,12 +204,12 @@ async function fromInquiry(db,env,q) {
  const office=x.office_name?'\n'+x.office_name:'',hello=`שלום ${q.contact_name||q.name},`;
  let caseId=null,link=null,view=null;
  if(q.template_id&&admin){
-  // Same mobile and same email is the client the office already knows. Anything less opens a new client,
-  // so typing someone else's mobile never reaches their details.
-  const known=await one(db,'SELECT client_id FROM clients WHERE phone=? AND lower(email)=? ORDER BY created_at LIMIT 1',q.phone,q.email);
+  // Same name, mobile and email is the client the office already knows. Anything less opens a new client,
+  // so typing someone else's mobile never reaches their details, and a new name is a new client on the board.
+  const known=await one(db,'SELECT client_id FROM clients WHERE phone=? AND lower(email)=? AND (lower(trim(name))=lower(?) OR lower(trim(contact_name))=lower(?)) ORDER BY created_at LIMIT 1',q.phone,q.email,q.name,q.contact_name||q.name);
   const client_id=known?.client_id||uid();
   if(!known)await insertClient(db,client_id,{name:q.name,contact_name:q.contact_name,business_number:q.business_number,email:q.email,phone:q.phone,notes:q.note,regular_template_id:q.template_id},admin.staff_id);
-  const t=await one(db,'SELECT name FROM templates WHERE template_id=?',q.template_id),today=localDate(),year=Number(today.slice(0,4))-(q.need==='open_business'?0:1),name=t.name+' · '+year;
+  const t=await one(db,'SELECT name FROM templates WHERE template_id=?',q.template_id),today=localDate(),year=Number(today.slice(0,4))-(q.need==='open_business'?0:1),name=t.name+' '+year;
   // Asking twice for the same thing gets the open case again, not a second one.
   const same=await one(db,"SELECT case_id FROM cases WHERE client_id=? AND name=? AND status NOT IN ('closed','archived')",client_id,name);
   if(same)caseId=same.case_id;
@@ -220,10 +220,10 @@ async function fromInquiry(db,env,q) {
   link=await portalLink(env,db,caseId);view=await caseView(db,caseId,true);}
  const toClient=view?{subject:'מסמכים לתיק '+view.name+(x.office_name?' · '+x.office_name:''),html:emailHtml(openingText(x,view,link),link)}
   :{subject:'קיבלנו את הפנייה'+(x.office_name?' · '+x.office_name:''),html:noteHtml(`${hello}\nקיבלנו את הפנייה שלך ונחזור אליך בהקדם.${office}`)};
- const alert=[`פנייה חדשה מדף הנחיתה: ${q.name}`,...(q.contact_name&&q.contact_name!==q.name?['איש קשר: '+q.contact_name]:[]),'נייד: '+q.phone,'דוא״ל: '+q.email,'צריך: '+q.need_label,...(q.note?['הערה: '+q.note]:[]),
+ const alert=[`השאירו פרטים: ${q.name}`,...(q.contact_name&&q.contact_name!==q.name?['איש קשר: '+q.contact_name]:[]),'נייד: '+q.phone,'דוא״ל: '+q.email,'צריך: '+q.need_label,...(q.note?['הערה: '+q.note]:[]),
   view?`נפתח תיק "${view.name}" על שם ${admin.name}, ונשלח ללקוח מייל עם הקישור ורשימת המסמכים.`:'אין לזה רשימת מסמכים מוכנה. צריך לפתוח תיק מהפנייה במסך הלקוחות.'].join('\n');
  const [sent]=await Promise.all([autoEmail(env,{to:q.email,reply_to:x.email||'',...toClient}),
-  autoEmail(env,{to:x.email||admin?.email||'',reply_to:q.email,subject:(view?'תיק חדש מדף הנחיתה: ':'פנייה חדשה מדף הנחיתה: ')+q.name,html:noteHtml(alert,SITE+'office.html','למסך המשרד')})]);
+  autoEmail(env,{to:x.email||admin?.email||'',reply_to:q.email,subject:'מסמכים בזמן · השאירו פרטים: '+q.name,html:noteHtml(alert,SITE+'office.html','למסך המשרד')})]);
  if(sent&&caseId)await db.batch([stmt(db,'INSERT INTO contacts(send_id,case_id,channel,actor_id) VALUES (?,?,?,NULL)',sent,caseId,'email'),
   stmt(db,"INSERT INTO events(event_id,case_id,action,detail) VALUES (?,?,'email_sent',?)",'contact-'+sent,caseId,'פתיחת תיק · '+q.email)]);
  return {ok:true,opened:!!caseId,case_name:view?.name||'',link:link||'',email:q.email,email_sent:!!sent};
