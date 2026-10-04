@@ -128,11 +128,12 @@ const inquiry = { name: 'נגריית הזית', contact_name: 'דנה', phone: 
 
 test('the landing page leaves an inquiry, and the office sees and handles it', async () => {
   const db = await seed(), e = env(db);
-  const r = await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: inquiry });
+  const r = await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other' } });
   assert.equal(r.status, 200);
+  assert.equal(r.body.opened, false);
   const list = (await call(e, '/api/inquiries')).body;
   assert.equal(list.length, 1);
-  assert.deepEqual([list[0].phone, list[0].email, list[0].need, list[0].template_id], ['052-1112233', 'dana@example.co', 'החזר מס', 'ct-refund']);
+  assert.deepEqual([list[0].phone, list[0].email, list[0].need, list[0].template_id], ['052-1112233', 'dana@example.co', 'משהו אחר', null]);
   assert.equal((await call(e, '/api/inquiries/' + list[0].inquiry_id, { method: 'POST', data: { status: 'handled', client_id: 'cl1' } })).status, 200);
   assert.equal((await call(e, '/api/inquiries')).body.length, 0);
   // Handled once only.
@@ -160,4 +161,39 @@ test('the starting case types are loaded, with required and optional documents',
   assert.equal(db.raw.prepare("SELECT count(*) n FROM templates WHERE template_id LIKE 'ct-%'").get().n, 9);
   // A document shared by several case types exists once.
   assert.equal(db.raw.prepare("SELECT count(*) n FROM document_catalog WHERE name='תדפיס בנק'").get().n, 1);
+});
+
+test('an inquiry with a ready document list opens the client and the case by itself and emails both sides', async t => {
+  const db = await seed(), e = { ...env(db), MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test', MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_BRIDGE_ENABLED: 'true' };
+  db.raw.prepare("UPDATE settings SET office_name='משרד כהן',email='office@example.com' WHERE id=1").run();
+  const sent = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => { const m = Object.fromEntries(init.body); sent.push(m); return new Response(JSON.stringify({ status: 'sent', send_id: m.send_id }), { headers: { 'content-type': 'application/json' } }); });
+  const r = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'annual_selfemployed' } })).body;
+  const year = new Date().getFullYear() - 1;
+  assert.equal(r.opened, true); assert.equal(r.email_sent, true);
+  assert.match(r.link, /client\.html#[A-Za-z0-9]{10}$/);
+  const c = db.raw.prepare('SELECT c.*,cl.name client,cl.email FROM cases c JOIN clients cl USING(client_id) WHERE c.name LIKE ?').get('%' + year);
+  assert.equal(c.client, 'נגריית הזית'); assert.equal(c.email, 'dana@example.co'); assert.equal(c.owner_id, 'admin1');
+  assert.deepEqual([c.period_start, c.period_end], [year + '-01-01', year + '-12-31']);
+  assert.ok(db.raw.prepare('SELECT count(*) n FROM requirements WHERE case_id=?').get(c.case_id).n > 0);
+  // One email to the client with the link and the list, one alert to the office.
+  const toClient = sent.find(m => m.to === 'dana@example.co'), toOffice = sent.find(m => m.to === 'office@example.com');
+  assert.match(toClient.html, /פתחנו לך תיק/); assert.equal(toClient.reply_to, 'office@example.com');
+  assert.match(toOffice.subject, /^תיק חדש מדף הנחיתה: נגריית הזית/); assert.equal(toOffice.reply_to, 'dana@example.co');
+  assert.equal((await call(e, '/api/inquiries')).body.length, 0);
+  const view = (await call(e, '/api/cases/' + c.case_id)).body;
+  assert.ok(view.events.some(x => x.action === 'case_from_inquiry')); assert.equal(view.contact_count, 1);
+  // The same request again gets the same open case, and the known client is reused.
+  const again = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'annual_selfemployed' } })).body;
+  assert.equal(again.link, r.link);
+  assert.equal(db.raw.prepare("SELECT count(*) n FROM clients WHERE name='נגריית הזית'").get().n, 1);
+  // Same mobile with another email is a new client, so a stranger never reaches an existing client's case.
+  const other = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, email: 'x@example.com', need: 'annual_selfemployed' } })).body;
+  assert.notEqual(other.link, r.link);
+  // Something else: a confirmation to the client, and the inquiry waits for the office.
+  sent.length = 0;
+  const wait = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other' } })).body;
+  assert.equal(wait.opened, false); assert.equal(wait.email_sent, true);
+  assert.match(sent.find(m => m.to === 'dana@example.co').html, /קיבלנו את הפנייה שלך ונחזור אליך בהקדם/);
+  assert.equal((await call(e, '/api/inquiries')).body.length, 1);
 });
