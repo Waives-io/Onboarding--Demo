@@ -274,7 +274,7 @@ function linkDialog(link,caseId,fresh=false){return sendDialog(caseId,fresh);}
 
 const openLink=id=>sendDialog(id).catch(e=>toast(e.message));
 
-const events={case_created:'התיק נפתח',client_opened:'הלקוח פתח את הקישור',upload_stored:'מסמך נשמר',upload_stored_late:'מסמך נשמר באיחור',upload_failed:'שמירת מסמך נכשלה',client_completed:'הלקוח סיים לשלוח',approved:'מסמך אושר',correction:'התבקש תיקון',reminder_prepared:'הוכנה תזכורת',case_status:'סטטוס התיק השתנה',link_revoked:'הקישור האישי הוחלף',owner_changed:'האחראי על התיק הוחלף',client_unavailable:'הלקוח ציין שאין לו מסמך',client_unavailable_undone:'הלקוח ביטל את "אין לי"',contact:'פנייה ללקוח',email_sent:'נשלח מייל ללקוח'};
+const events={case_created:'התיק נפתח',case_from_inquiry:'נפתח אוטומטית מפנייה בדף הנחיתה',client_opened:'הלקוח פתח את הקישור',upload_stored:'מסמך נשמר',upload_stored_late:'מסמך נשמר באיחור',upload_failed:'שמירת מסמך נכשלה',client_completed:'הלקוח סיים לשלוח',approved:'מסמך אושר',correction:'התבקש תיקון',reminder_prepared:'הוכנה תזכורת',case_status:'סטטוס התיק השתנה',link_revoked:'הקישור האישי הוחלף',owner_changed:'האחראי על התיק הוחלף',client_unavailable:'הלקוח ציין שאין לו מסמך',client_unavailable_undone:'הלקוח ביטל את "אין לי"',contact:'פנייה ללקוח',email_sent:'נשלח מייל ללקוח'};
 // The client said they do not have this document. The office approves the absence or asks for it anyway.
 const noFile=r=>r.status==='missing'&&r.unavailable_note!=null;
 // A document waiting for a decision comes first. Approved documents fold away so the page shows what is left to do.

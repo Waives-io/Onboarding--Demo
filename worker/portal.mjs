@@ -81,6 +81,10 @@ function emailHtml(text,link) {
  const body=text.split('\n').filter(l=>!l.includes(link)).map(escHtml).join('<br>');
  return `<div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.7;color:#1b1b1f;text-align:right;max-width:560px">${body}<p style="margin:22px 0"><a href="${escHtml(link)}" style="display:inline-block;background:#2e9e64;color:#ffffff;text-decoration:none;font-weight:bold;padding:13px 24px;border-radius:12px">להעלאת המסמכים</a></p></div>`;
 }
+// A short email with an optional button: the inquiry confirmation and the office alert.
+function noteHtml(text,link='',label='') {
+ return `<div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.7;color:#1b1b1f;text-align:right;max-width:560px">${text.split('\n').map(escHtml).join('<br>')}${link?`<p style="margin:22px 0"><a href="${escHtml(link)}" style="display:inline-block;background:#2e9e64;color:#ffffff;text-decoration:none;font-weight:bold;padding:13px 24px;border-radius:12px">${escHtml(label)}</a></p>`:''}</div>`;
+}
 // The office's last contact with the client about a case: when, how, and how many times.
 const contactSql=t=>`(SELECT count(*) FROM contacts WHERE case_id=${t}.case_id) contact_count,(SELECT max(created_at) FROM contacts WHERE case_id=${t}.case_id) last_contact_at,(SELECT channel FROM contacts WHERE case_id=${t}.case_id ORDER BY created_at DESC LIMIT 1) last_channel`;
 // One definition of "waiting for review" for the approve-all button, the route and its events.
@@ -185,6 +189,44 @@ async function make(env,payload) {
  payload.set('bridge_key',env.MAKE_BRIDGE_KEY);payload.set('schema_version','2');payload.set('test_mode','true');
  const response=await fetch(url,{method:'POST',body:payload,redirect:'manual',signal:AbortSignal.timeout(25000)});
  requireThat(response.ok,'storage_unconfirmed',502);try{return await response.json();}catch{throw new HttpError(502,'storage_unconfirmed');}
+}
+async function autoEmail(env,{to,reply_to='',subject,html}) {
+ const send_id=uid(),p=new FormData(),line=v=>String(v??'').replace(/[\r\n]+/g,' ').trim();
+ if(!to)return null;
+ for(const [k,v] of Object.entries({action:'send_email',send_id,to:line(to),reply_to:line(reply_to),subject:line(subject),html}))p.set(k,v);
+ try{const r=await make(env,p);return r?.status==='sent'&&r.send_id===send_id?send_id:null;}catch{return null;}
+}
+// The landing page opens the case by itself: the case type that fits the need, owned by the office manager,
+// for last year (a new business: this year), due in 14 days, and the opening email goes out at once.
+// "Something else" has no document list, so it waits for the office and the visitor gets a short confirmation.
+async function fromInquiry(db,env,q) {
+ const x=await settings(db),admin=await one(db,"SELECT staff_id,name,email,role FROM staff WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1");
+ const office=x.office_name?'\n'+x.office_name:'',hello=`שלום ${q.contact_name||q.name},`;
+ let caseId=null,link=null,view=null;
+ if(q.template_id&&admin){
+  // Same mobile and same email is the client the office already knows. Anything less opens a new client,
+  // so typing someone else's mobile never reaches their details.
+  const known=await one(db,'SELECT client_id FROM clients WHERE phone=? AND lower(email)=? ORDER BY created_at LIMIT 1',q.phone,q.email);
+  const client_id=known?.client_id||uid();
+  if(!known)await insertClient(db,client_id,{name:q.name,contact_name:q.contact_name,business_number:q.business_number,email:q.email,phone:q.phone,notes:q.note,regular_template_id:q.template_id},admin.staff_id);
+  const t=await one(db,'SELECT name FROM templates WHERE template_id=?',q.template_id),today=localDate(),year=Number(today.slice(0,4))-(q.need==='open_business'?0:1),name=t.name+' · '+year;
+  // Asking twice for the same thing gets the open case again, not a second one.
+  const same=await one(db,"SELECT case_id FROM cases WHERE client_id=? AND name=? AND status NOT IN ('closed','archived')",client_id,name);
+  if(same)caseId=same.case_id;
+  else{const due=new Date(Date.parse(today+'T12:00:00Z')+14*864e5).toISOString().slice(0,10);
+   const c=await caseStatements(db,{client_id,name,type:t.name,template_id:q.template_id,period_start:year+'-01-01',period_end:year+'-12-31',due_date:due},env,admin,admin);
+   c.statements.push(event(db,c.id,'case_from_inquiry',q.need_label,{type:'client',id:client_id}));await db.batch(c.statements);caseId=c.id;}
+  await stmt(db,"UPDATE inquiries SET status='handled',client_id=?,handled_at=?,handled_by=? WHERE inquiry_id=?",client_id,now(),admin.staff_id,q.inquiry_id).run();
+  link=await portalLink(env,db,caseId);view=await caseView(db,caseId,true);}
+ const toClient=view?{subject:'מסמכים לתיק '+view.name+(x.office_name?' · '+x.office_name:''),html:emailHtml(openingText(x,view,link),link)}
+  :{subject:'קיבלנו את הפנייה'+(x.office_name?' · '+x.office_name:''),html:noteHtml(`${hello}\nקיבלנו את הפנייה שלך ונחזור אליך בהקדם.${office}`)};
+ const alert=[`פנייה חדשה מדף הנחיתה: ${q.name}`,...(q.contact_name&&q.contact_name!==q.name?['איש קשר: '+q.contact_name]:[]),'נייד: '+q.phone,'דוא״ל: '+q.email,'צריך: '+q.need_label,...(q.note?['הערה: '+q.note]:[]),
+  view?`נפתח תיק "${view.name}" על שם ${admin.name}, ונשלח ללקוח מייל עם הקישור ורשימת המסמכים.`:'אין לזה רשימת מסמכים מוכנה. צריך לפתוח תיק מהפנייה במסך הלקוחות.'].join('\n');
+ const [sent]=await Promise.all([autoEmail(env,{to:q.email,reply_to:x.email||'',...toClient}),
+  autoEmail(env,{to:x.email||admin?.email||'',reply_to:q.email,subject:(view?'תיק חדש מדף הנחיתה: ':'פנייה חדשה מדף הנחיתה: ')+q.name,html:noteHtml(alert,SITE+'office.html','למסך המשרד')})]);
+ if(sent&&caseId)await db.batch([stmt(db,'INSERT INTO contacts(send_id,case_id,channel,actor_id) VALUES (?,?,?,NULL)',sent,caseId,'email'),
+  stmt(db,"INSERT INTO events(event_id,case_id,action,detail) VALUES (?,?,'email_sent',?)",'contact-'+sent,caseId,'פתיחת תיק · '+q.email)]);
+ return {ok:true,opened:!!caseId,case_name:view?.name||'',link:link||'',email:q.email,email_sent:!!sent};
 }
 async function storeReceipt(db,u,receipt) {
  requireThat(receipt.status==='stored' && receipt.submission_id===u.submission_id && /^[\w-]{5,200}$/.test(receipt.drive_file_id||'') && /^[\w-]{5,200}$/.test(receipt.drive_folder_id||'') && receipt.sheet_updated===true,'storage_unconfirmed',502);
@@ -316,9 +358,10 @@ async function handle(req,env) {
  const phone=formatMobile(clean(b.phone??'',40,true));requireThat(phone,'invalid_mobile');
  const need=clean(b.need??'',40,true);requireThat(need in NEEDS,'invalid_fields');
  const tpl=NEEDS[need].template&&await one(db,'SELECT template_id FROM templates WHERE template_id=?',NEEDS[need].template);
+ const q={inquiry_id:uid(),name:clean(b.name??'',120,true),contact_name:clean(b.contact_name??'',120),business_number:clean(b.business_number??'',40),phone,email:emailOf(b.email),need,need_label:NEEDS[need].label,template_id:tpl?.template_id||null,note:clean(b.note??'',500)};
  await stmt(db,'INSERT INTO inquiries(inquiry_id,name,contact_name,business_number,phone,email,need,template_id,note,source) VALUES (?,?,?,?,?,?,?,?,?,?)',
-  uid(),clean(b.name??'',120,true),clean(b.contact_name??'',120),clean(b.business_number??'',40),phone,emailOf(b.email),NEEDS[need].label,tpl?.template_id||null,clean(b.note??'',500),clean(b.source??'',60)).run();
- return {ok:true};
+  q.inquiry_id,q.name,q.contact_name,q.business_number,phone,q.email,q.need_label,q.template_id,q.note,clean(b.source??'',60)).run();
+ return fromInquiry(db,env,q);
  }
  // Deny by default: every route below either checks adminOnly, or limits a manager to their own cases and clients.
  const me=await office(req,db),actor=staffActor(me);
