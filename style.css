@@ -440,3 +440,6 @@ button.accent:hover { background: rgba(255,218,42,.10); }
   .home .benefit p { font-size: .9rem; line-height: 1.5; }
   .home.client-page { max-width: 1080px; }
 }
+
+/* A status pill above a hero headline (thank-you screens). */
+.welcome > .badge { margin-bottom: 14px; }
