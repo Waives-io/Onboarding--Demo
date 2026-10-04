@@ -12,7 +12,7 @@
 .landing-steps { margin: 0; padding-inline-start: 20px; }
 .landing-steps li { margin: 5px 0; }
 
-.client-head h1 { margin: 2px 0 5px; font-size: clamp(2rem,7vw,3.5rem); }
+.client-head h1 { margin: 2px 0 5px; }
 .client-head p { margin: 0; }
 .doc-group { margin: 0 0 24px; }
 .doc-group h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 1.08rem; }
@@ -57,6 +57,25 @@
   .pin-card { margin-top: 0; padding: 28px 16px; }
   .pin-boxes { gap: 7px; }
   .pin-box { width: min(58px,19vw); height: 58px; }
-  .pick-buttons { flex-direction: column; }
   .doc-line { align-items: flex-start; flex-direction: column; gap: 3px; }
+}
+
+/* The client page at its recommended size: a short header, compact rows, buttons as big as a finger needs and no bigger.
+   On a computer each document is one row: name on the right, the two buttons on the left. */
+.client-head { padding-top: 30px; padding-bottom: 18px; }
+.doc-item { padding: 12px 14px; }
+.pick-buttons { margin-top: 10px; }
+.pick { min-height: 44px; padding: 8px 14px; }
+.doc-actions { margin-top: 6px; }
+.doc-item .text-button.small { min-height: 36px; }
+@media (min-width: 700px) {
+  .client-head { padding-top: 26px; padding-bottom: 14px; }
+  .doc-group { margin-bottom: 18px; }
+  .doc-list { gap: 8px; }
+  .doc-item.todo { display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; }
+  .doc-item.todo > * { flex: 1 1 100%; }
+  .doc-item.todo > .doc-line { flex: 1 1 220px; justify-content: flex-start; gap: 10px; }
+  .doc-item.todo > .pick-buttons { flex: 0 0 auto; margin-top: 0; }
+  .doc-item.todo > .text-button.small { flex: 0 0 auto; min-height: 32px; margin-top: 4px; }
+  .doc-item.todo .pick { flex: none; min-width: 120px; min-height: 40px; padding: 7px 18px; }
 }
