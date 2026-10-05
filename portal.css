@@ -79,3 +79,7 @@
   .doc-item.todo > .text-button.small { flex: 0 0 auto; min-height: 32px; margin-top: 4px; }
   .doc-item.todo .pick { flex: none; min-width: 120px; min-height: 40px; padding: 7px 18px; }
 }
+
+/* The line for "something else" sits in the empty cell next to it. */
+.need-options .other-need:not([hidden]) { display: flex; align-items: center; padding: 0; border: 0; background: none; cursor: auto; }
+.other-need input { width: 100%; min-height: 48px; }

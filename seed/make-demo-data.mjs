@@ -23,7 +23,7 @@ const clients = [
   ['demo-cl-10', 'מאפה השכונה בע״מ', 'C-1010', '517788990', 'bakery@example.com', '058-2233445', 'חברה בע״מ'],
 ];
 
-// status of each document: m=missing, u=uploaded (stored, waiting for review), c=correction, a=approved
+// status of each document: m=missing, u=uploaded (stored, waiting for review), c=correction, a=approved, n=missing with the client's reason
 const MONTHLY = [['expenses', 'מסמכי הוצאות', 1, 10], ['sales', 'דוח מכירות', 1, 1], ['bank', 'תדפיס בנק', 1, 3]];
 const ANNUAL = [['annual', 'אישור יתרות שנתי', 1, 3], ['bank', 'תדפיס בנק', 1, 3]];
 const cases = [
@@ -46,6 +46,8 @@ const cases = [
   // Added 2026-09-30: two more cases whose documents are all approved.
   ['demo-cl-04', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 4, 'ready_for_work', 'aaa'],
   ['demo-cl-08', 'הנהלת חשבונות חודשית', MONTHLY, ['2026-08-01', '2026-08-31'], 9, 'ready_for_work', 'aaa'],
+  // Added 2026-10-05: the client says they do not have one document and waits for the office's answer (n = no file, with a reason).
+  ['demo-cl-09', 'דוח שנתי', ANNUAL, ['2025-01-01', '2025-12-31'], 12, 'collecting', 'mn'],
 ];
 
 const period = ([a, b]) => a.slice(5, 7) === '01' && b.slice(5, 7) === '12' ? a.slice(0, 4) : `${a.slice(5, 7)}/${a.slice(0, 4)}`;
@@ -57,8 +59,10 @@ cases.forEach(([client, type, docs, range, due, status, states, note], i) => {
   const id = `demo-case-${String(i + 1).padStart(2, '0')}`, done = ['ready_for_work', 'archived'].includes(status);
   out.push(`INSERT OR IGNORE INTO cases(case_id,client_id,name,type,category,reporting_period,period_start,period_end,due_date,owner,owner_id,token_hash,link_version,status,client_completed_at,completed_at,closed_at) VALUES (${[id, client, `${type} ${period(range)}`, type, clients.find(c => c[0] === client)[6], `${ddmm(range[0])}–${ddmm(range[1])}`, range[0], range[1], day(due)].map(q).join(',')},${ADMIN_NAME},${ADMIN},${q('unissued-' + id)},0,${q(status)},${['client_completed', 'ready_for_work', 'archived'].includes(status) ? q(day(-3) + 'T09:00:00.000Z') : 'NULL'},${done ? q(day(-1) + 'T12:00:00.000Z') : 'NULL'},${status === 'archived' ? q(day(-1) + 'T12:00:00.000Z') : 'NULL'});`);
   docs.forEach(([doc, docName, required, max], j) => {
-    const rid = `${id}-r${j + 1}`, st = { m: 'missing', u: 'uploaded', c: 'correction', a: 'approved' }[states[j]];
+    const rid = `${id}-r${j + 1}`, st = { m: 'missing', u: 'uploaded', c: 'correction', a: 'approved', n: 'missing' }[states[j]];
     out.push(`INSERT OR IGNORE INTO requirements(requirement_id,case_id,document_id,name,required,max_files,position,status,correction_message) VALUES (${[rid, id, doc, docName, required, max, j, st, st === 'correction' ? note : ''].map(q).join(',')});`);
+    if (states[j] === 'n')
+      out.push(`UPDATE requirements SET unavailable_note=${q('אין לי חשבון בנק עסקי. הכול עובר בחשבון הפרטי.')},unavailable_at=${q(day(-1) + 'T09:00:00.000Z')} WHERE requirement_id=${q(rid)} AND unavailable_note IS NULL;`);
     if (st !== 'missing')
       out.push(`INSERT OR IGNORE INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state,created_at,stored_at) VALUES (${[`${rid}-u1`, rid, `${docName}.pdf`, 'application/pdf', 184320, 'demo', 1, 'stored', day(-4) + 'T10:00:00.000Z', day(-4) + 'T10:00:05.000Z'].map(q).join(',')});`);
   });
@@ -75,7 +79,8 @@ cases.forEach(([client, type, docs, range, due, status, states], i) => {
   ev(id, 1, 'email_sent', 'פתיחת תיק · ' + c[4], day(-10) + 'T08:30:00.000Z');
   ev(id, 2, 'client_opened', '', day(-9) + 'T17:12:00.000Z', ['client', client]);
   docs.forEach(([doc, docName], j) => {
-    const st = states[j]; if (st === 'm') return;
+    const st = states[j]; if (st === 'n') ev(id, 30 + j, 'client_unavailable', docName, day(-1) + 'T09:00:00.000Z', ['client', client]);
+    if (st === 'm' || st === 'n') return;
     const sid = `${id}-r${j + 1}-u1`;
     files.push({ submission_id: sid, client: c[1], business_number: c[3], doc: docName, period: period(range), range, wrong_month: id === 'demo-case-09' && doc === 'sales' });
     ev(id, 10 + j, 'upload_stored', docName + '.pdf', day(-4) + 'T1' + j + ':05:00.000Z', ['client', client]);

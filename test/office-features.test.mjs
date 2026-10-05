@@ -49,7 +49,7 @@ test('case list carries progress, deadline and a WhatsApp number', async () => {
 test('deadline thresholds come from office settings', async () => {
   const db = await seed({ due: addDays(10) }), e = env(db);
   assert.equal((await call(e, '/api/cases')).body[0].deadline, 'ok');
-  const s = await call(e, '/api/settings', { method: 'POST', data: { office_name: 'משרד בדיקה', warning_days: 14, urgent_days: 3 } });
+  const s = await call(e, '/api/settings', { method: 'POST', data: { office_name: 'משרד בדיקה', warning_days: 14, urgent_days: 3, due_days: 20 } });
   assert.equal(s.status, 200);
   assert.equal((await call(e, '/api/cases')).body[0].deadline, 'warning');
 });
@@ -193,7 +193,7 @@ test('a case loaded without a link gets one the first time the office asks', asy
 
 test('a client file keeps a contact person and its regular document list', async () => {
   const db = await seed(), e = env(db);
-  db.raw.prepare("INSERT INTO templates VALUES ('t-monthly','חודשי') ON CONFLICT DO NOTHING").run();
+  db.raw.prepare("INSERT INTO templates(template_id,name) VALUES ('t-monthly','חודשי') ON CONFLICT DO NOTHING").run();
   const base = { name: 'נגריית הזית', phone: '0521112233', email: 'a@b.co', contact_name: 'דנה', regular_template_id: 't-monthly' };
   const r = await call(e, '/api/clients', { method: 'POST', data: base });
   assert.equal(r.status, 200);
@@ -253,7 +253,7 @@ test('a new case has its own opening message, separate from the reminder', async
   const lines = r.body.text.split('\n');
   assert.equal(lines[0], 'שלום Test Client,');
   assert.equal(lines[1], 'פתחנו לך תיק Monthly. נצטרך: Bank, Sales');
-  assert.match(r.body.text, /להעלאה: https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}\nעד 04\/10\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.\nמשרד כהן$/);
+  assert.match(r.body.text, /להעלאה: https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}\nהגשת מסמכים עד 04\/10\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.\nמשרד כהן$/);
   // The office's reminder wording never leaks into the opening message, and opening it records no reminder.
   assert.doesNotMatch(r.body.text, /תזכורת/);
   const view = await call(e, '/api/cases/case1');
@@ -312,7 +312,7 @@ test('a short link opens the right case, stops with a revoke, and is rate-limite
   // The default reminder is four lines (plus the PIN hint): hello, what is missing, the link, until when.
   db.raw.prepare("UPDATE cases SET due_date='2026-10-04' WHERE case_id='case1'").run();
   const text = (await call(e, '/api/cases/case1/reminder', { method: 'POST', data: {} })).body.text.split('\n');
-  assert.deepEqual(text, ['שלום Test Client,', 'חסר לתיק Monthly: Bank, Sales', 'להעלאה: ' + link, 'עד 04/10', 'לכניסה: 4 הספרות האחרונות של הנייד שלך.']);
+  assert.deepEqual(text, ['שלום Test Client,', 'חסר לתיק Monthly: Bank, Sales', 'להעלאה: ' + link, 'הגשת מסמכים עד 04/10', 'לכניסה: 4 הספרות האחרונות של הנייד שלך.']);
   const revoked = (await call(e, '/api/cases/case1/revoke-link', { method: 'POST', data: {} })).body.link;
   assert.notEqual(revoked, link);
   assert.equal((await call(e, '/api/short/' + link.split('#')[1], { auth: 'none' })).status, 404);
@@ -367,4 +367,43 @@ test('an email is sent once per send_id, an unknown outcome is not resent blindl
   assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: refused } })).body.error, 'email_failed');
   mode = 'ok';
   assert.equal((await call(e, '/api/cases/case1/email', { method: 'POST', data: { kind: 'opening', send_id: refused } })).body.sent, true);
+});
+
+test('case types keep their period kind, and a case without a period has no dates', async () => {
+  const db = await seed(), e = env(db);
+  const kind = id => db.raw.prepare('SELECT period_kind FROM templates WHERE template_id=?').get(id).period_kind;
+  assert.deepEqual(['ct-annual-individual', 'monthly', 'ct-vat-period', 'ct-open-business', 'ct-capital-declaration', 'ct-refund'].map(kind), ['year', 'month', 'range', 'none', 'none', 'year']);
+  const items = [{ name: 'Bank', required: true, max_files: 1 }];
+  const t = (await call(e, '/api/templates', { method: 'POST', data: { name: 'קליטה', period_kind: 'range', items } })).body.template_id;
+  assert.equal(kind(t), 'range');
+  // Saving documents into the type from a new case does not touch its period kind.
+  await call(e, '/api/templates', { method: 'POST', data: { template_id: t, name: 'קליטה', items } });
+  assert.equal(kind(t), 'range');
+  assert.equal((await call(e, '/api/templates', { method: 'POST', data: { name: 'x', period_kind: 'week', items } })).body.error, 'invalid_fields');
+  const r = await call(e, '/api/cases', { method: 'POST', data: { client_id: 'cl2', name: 'הצהרת הון', type: 'הצהרת הון', due_date: addDays(10), requirements: items } });
+  assert.equal(r.status, 200);
+  const c = db.raw.prepare('SELECT * FROM cases WHERE case_id=?').get(r.body.case_id);
+  assert.deepEqual([c.name, c.period_start, c.period_end, c.reporting_period], ['הצהרת הון', null, null, '']);
+  // The reminder and the case page have no empty period.
+  const text = (await call(e, '/api/cases/' + r.body.case_id + '/reminder', { method: 'POST', data: {} })).body.text;
+  assert.doesNotMatch(text, /null|undefined/);
+});
+
+test('the submission date changes in place and the change is in the history', async () => {
+  const db = await seed(), e = env(db);
+  const v = await call(e, '/api/cases/case1/due', { method: 'POST', data: { due_date: addDays(3) } });
+  assert.equal(v.body.due_date, addDays(3));
+  const ev = v.body.events.find(x => x.action === 'due_changed');
+  assert.equal(ev.detail, addDays(30).split('-').reverse().join('/') + ' → ' + addDays(3).split('-').reverse().join('/'));
+  assert.equal((await call(e, '/api/cases/case1/due', { method: 'POST', data: { due_date: '2026-02-31' } })).body.error, 'invalid_due_date');
+});
+
+test('days to submit come from the settings and stay after the warning', async () => {
+  const db = await seed(), e = env(db), base = { office_name: 'x', warning_days: 7, urgent_days: 2 };
+  assert.equal(db.raw.prepare('SELECT due_days FROM settings WHERE id=1').get().due_days, 14);
+  assert.equal((await call(e, '/api/settings', { method: 'POST', data: { ...base, due_days: 10 } })).body.due_days, 10);
+  assert.equal((await call(e, '/api/settings', { method: 'POST', data: { ...base, due_days: 91 } })).body.error, 'invalid_due_days');
+  assert.equal((await call(e, '/api/settings', { method: 'POST', data: { ...base, due_days: 7 } })).body.error, 'warning_after_due');
+  // A save that does not mention the days keeps them.
+  assert.equal((await call(e, '/api/settings', { method: 'POST', data: base })).body.due_days, 10);
 });

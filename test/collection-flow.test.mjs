@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import worker from '../worker/portal.mjs';
 import { hash, caseToken, phonePin, formatMobile, deriveStatus, caseProgress } from '../worker/domain.mjs';
 import { d1 } from './support.mjs';
+import { localDate } from '../worker/domain.mjs';
+import { addDays } from '../board.mjs';
 
 const SITE = 'https://waives-io.github.io';
 const OFFICE_TOKEN = 'e'.repeat(64);
@@ -128,12 +130,12 @@ const inquiry = { name: 'נגריית הזית', contact_name: 'דנה', phone: 
 
 test('the landing page leaves an inquiry, and the office sees and handles it', async () => {
   const db = await seed(), e = env(db);
-  const r = await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other' } });
+  const r = await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other', other: 'ייעוץ לפני מכירת דירה' } });
   assert.equal(r.status, 200);
   assert.equal(r.body.opened, false);
   const list = (await call(e, '/api/inquiries')).body;
   assert.equal(list.length, 1);
-  assert.deepEqual([list[0].phone, list[0].email, list[0].need, list[0].template_id], ['052-1112233', 'dana@example.co', 'משהו אחר', null]);
+  assert.deepEqual([list[0].phone, list[0].email, list[0].need, list[0].template_id], ['052-1112233', 'dana@example.co', 'משהו אחר: ייעוץ לפני מכירת דירה', null]);
   assert.equal((await call(e, '/api/inquiries/' + list[0].inquiry_id, { method: 'POST', data: { status: 'handled', client_id: 'cl1' } })).status, 200);
   assert.equal((await call(e, '/api/inquiries')).body.length, 0);
   // Handled once only.
@@ -165,7 +167,7 @@ test('the starting case types are loaded, with required and optional documents',
 
 test('an inquiry with a ready document list opens the client and the case by itself and emails both sides', async t => {
   const db = await seed(), e = { ...env(db), MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test', MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_BRIDGE_ENABLED: 'true' };
-  db.raw.prepare("UPDATE settings SET office_name='משרד כהן',email='office@example.com' WHERE id=1").run();
+  db.raw.prepare("UPDATE settings SET office_name='משרד כהן',email='office@example.com',due_days=10 WHERE id=1").run();
   const sent = [];
   t.mock.method(globalThis, 'fetch', async (url, init) => { const m = Object.fromEntries(init.body); sent.push(m); return new Response(JSON.stringify({ status: 'sent', send_id: m.send_id }), { headers: { 'content-type': 'application/json' } }); });
   const r = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'annual_selfemployed' } })).body;
@@ -175,6 +177,7 @@ test('an inquiry with a ready document list opens the client and the case by its
   const c = db.raw.prepare('SELECT c.*,cl.name client,cl.email FROM cases c JOIN clients cl USING(client_id) WHERE c.name LIKE ?').get('%' + year);
   assert.equal(c.client, 'נגריית הזית'); assert.equal(c.email, 'dana@example.co'); assert.equal(c.owner_id, 'admin1');
   assert.deepEqual([c.period_start, c.period_end], [year + '-01-01', year + '-12-31']);
+  assert.equal(c.due_date, addDays(localDate(), 10));
   assert.ok(db.raw.prepare('SELECT count(*) n FROM requirements WHERE case_id=?').get(c.case_id).n > 0);
   // One email to the client with the link and the list, one alert to the office.
   const toClient = sent.find(m => m.to === 'dana@example.co'), toOffice = sent.find(m => m.to === 'office@example.com');
@@ -196,7 +199,8 @@ test('an inquiry with a ready document list opens the client and the case by its
   assert.equal(db.raw.prepare("SELECT count(*) n FROM clients WHERE name='שרוליק'").get().n, 1);
   // Something else: a confirmation to the client, and the inquiry waits for the office.
   sent.length = 0;
-  const wait = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other' } })).body;
+  assert.equal((await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other' }, ip: '7.7.7.7' })).body.error, 'other_required');
+  const wait = (await call(e, '/api/inquiries', { method: 'POST', auth: 'none', data: { ...inquiry, need: 'other', other: 'ייעוץ' }, ip: '7.7.7.7' })).body;
   assert.equal(wait.opened, false); assert.equal(wait.email_sent, true);
   assert.match(sent.find(m => m.to === 'dana@example.co').html, /קיבלנו את הפנייה שלך ונחזור אליך בהקדם/);
   assert.equal((await call(e, '/api/inquiries')).body.length, 1);
