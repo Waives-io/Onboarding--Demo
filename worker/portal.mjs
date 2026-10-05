@@ -1,4 +1,5 @@
 import legacy from './intake.mjs';
+import {PERIOD_KINDS,defaultPeriod,periodOf,caseName,addDays} from '../board.mjs';
 import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,docCounts,periodText,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone,phonePin,formatMobile} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
 const SITE=ORIGIN+'/Onboarding--Demo/';
@@ -40,14 +41,14 @@ function syncCase(db,id) {
  WHEN NOT EXISTS(SELECT 1 FROM requirements WHERE case_id=cases.case_id AND required=1 AND status NOT IN ('uploaded','approved') AND unavailable_note IS NULL) THEN 'client_completed'
  ELSE 'collecting' END, last_activity=? WHERE case_id=?`,now(),id);
 }
-const DEFAULT_REMINDER='שלום {client},\nלתיק {case} חסרים:\n{missing}\nתאריך יעד: {due}\nלהעלאת המסמכים: {link}';
+const DEFAULT_REMINDER='שלום {client},\nלתיק {case} חסרים:\n{missing}\nהגשת מסמכים עד: {due}\nלהעלאת המסמכים: {link}';
 // What a visitor can choose on the landing page, in their words, and the case type it suggests to the office.
 const NEEDS={refund:{label:'החזר מס',template:'ct-refund'},annual_individual:{label:'דוח שנתי – שכיר או יחיד',template:'ct-annual-individual'},annual_selfemployed:{label:'דוח שנתי – עצמאי',template:'ct-annual-selfemployed'},annual_company:{label:'דוח שנתי – חברה',template:'ct-annual-company'},open_business:{label:'פתיחת עסק',template:'ct-open-business'},capital:{label:'הצהרת הון',template:'ct-capital-declaration'},other:{label:'משהו אחר',template:null}};
 // The link asks for the last 4 digits of the client's mobile. Every message says so, also a custom one.
 const PIN_HINT='לכניסה: 4 הספרות האחרונות של הנייד שלך.';
 const withPinHint=(text,phone)=>phonePin(phone)&&!text.includes('4 הספרות')?text+'\n'+PIN_HINT:text;
 const PLACEHOLDERS=['client','request','case','period','due','missing','link','office'];
-async function settings(db) {return await one(db,'SELECT * FROM settings WHERE id=1')||{office_name:'',warning_days:7,urgent_days:2,whatsapp_template:'',logo_version:0};}
+async function settings(db) {return await one(db,'SELECT * FROM settings WHERE id=1')||{office_name:'',warning_days:7,urgent_days:2,due_days:14,whatsapp_template:'',logo_version:0};}
 // Read the version at use time so a concurrent revoke can never hand out the old link.
 // A case loaded straight into the database (demo data, imports) has link_version 0 and no usable token yet.
 // The first time the office asks for its link, version 1 is issued. The guard makes two first requests agree.
@@ -65,14 +66,14 @@ function reminderText(s,view,link) {
  const missing=view.requirements.filter(r=>['missing','correction'].includes(r.status)&&(r.required||r.status==='correction')&&!(r.status==='missing'&&r.unavailable_note!=null));
  const values={client:view.contact_name||view.client_name,request:view.name,case:view.name,period:periodText(view.period_start,view.period_end,view.reporting_period),due:ddmmyyyy(view.due_date),office:s.office_name,link,
   missing:missing.map(r=>'• '+r.name+(r.correction_message?' — '+r.correction_message:'')).join('\n')};
- if(!s.whatsapp_template)return {missing,text:withPinHint([`שלום ${values.client},`,`חסר לתיק ${view.name}: ${missing.map(r=>r.name+(r.correction_message?' (לתקן: '+r.correction_message+')':'')).join(', ')}`,`להעלאה: ${link}`,...(view.due_date?[`עד ${ddmmyyyy(view.due_date).slice(0,5)}`]:[])].join('\n'),view.phone)};
+ if(!s.whatsapp_template)return {missing,text:withPinHint([`שלום ${values.client},`,`חסר לתיק ${view.name}: ${missing.map(r=>r.name+(r.correction_message?' (לתקן: '+r.correction_message+')':'')).join(', ')}`,`להעלאה: ${link}`,...(view.due_date?[`הגשת מסמכים עד ${ddmmyyyy(view.due_date).slice(0,5)}`]:[])].join('\n'),view.phone)};
  return {missing,text:withPinHint(s.whatsapp_template.replace(/\{(\w+)\}/g,(m,k)=>k in values?values[k]:m),view.phone)};
 }
 // The first message, when a case opens: what the office needs and the link. A reminder is a different message (reminderText).
 const ddmm=d=>ddmmyyyy(d).slice(0,5);
 function openingText(s,view,link) {
  const lines=[`שלום ${view.contact_name||view.client_name},`,`פתחנו לך תיק ${view.name}. נצטרך: ${view.requirements.filter(r=>r.required).map(r=>r.name).join(', ')}`,`להעלאה: ${link}`];
- if(view.due_date)lines.push(`עד ${ddmm(view.due_date)}`);
+ if(view.due_date)lines.push(`הגשת מסמכים עד ${ddmm(view.due_date)}`);
  return withPinHint(lines.join('\n'),view.phone)+(s.office_name?'\n'+s.office_name:'');
 }
 const escHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -167,7 +168,7 @@ async function caseStatements(db,b,env,me,owner) {
  // The office picks a date range. Imports may still send a free-text period.
  const start=b.period_start||null,end=b.period_end||null;
  if(start||end)requireThat(isDate(start)&&isDate(end)&&start<=end,'invalid_period');
- const period=start?`${ddmmyyyy(start)}–${ddmmyyyy(end)}`:clean(b.reporting_period,80,true);
+ const period=start?`${ddmmyyyy(start)}–${ddmmyyyy(end)}`:clean(b.reporting_period||'',80);
  let items=b.requirements;
  if(!items && b.template_id)items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',b.template_id);
  requireThat(Array.isArray(items)&&items.length>0&&items.length<=40,'requirements_required');
@@ -209,12 +210,12 @@ async function fromInquiry(db,env,q) {
   const known=await one(db,'SELECT client_id FROM clients WHERE phone=? AND lower(email)=? AND (lower(trim(name))=lower(?) OR lower(trim(contact_name))=lower(?)) ORDER BY created_at LIMIT 1',q.phone,q.email,q.name,q.contact_name||q.name);
   const client_id=known?.client_id||uid();
   if(!known)await insertClient(db,client_id,{name:q.name,contact_name:q.contact_name,business_number:q.business_number,email:q.email,phone:q.phone,notes:q.note,regular_template_id:q.template_id},admin.staff_id);
-  const t=await one(db,'SELECT name FROM templates WHERE template_id=?',q.template_id),today=localDate(),year=Number(today.slice(0,4))-(q.need==='open_business'?0:1),name=t.name+' '+year;
+  const t=await one(db,'SELECT name,period_kind FROM templates WHERE template_id=?',q.template_id),today=localDate(),kind=t.period_kind||'none',p=periodOf(kind,defaultPeriod(kind,today)),name=caseName(t.name,p.label);
   // Asking twice for the same thing gets the open case again, not a second one.
   const same=await one(db,"SELECT case_id FROM cases WHERE client_id=? AND name=? AND status NOT IN ('closed','archived')",client_id,name);
   if(same)caseId=same.case_id;
-  else{const due=new Date(Date.parse(today+'T12:00:00Z')+14*864e5).toISOString().slice(0,10);
-   const c=await caseStatements(db,{client_id,name,type:t.name,template_id:q.template_id,period_start:year+'-01-01',period_end:year+'-12-31',due_date:due},env,admin,admin);
+  else{const due=addDays(today,Number(x.due_days)||14);
+   const c=await caseStatements(db,{client_id,name,type:t.name,template_id:q.template_id,period_start:p.start,period_end:p.end,due_date:due},env,admin,admin);
    c.statements.push(event(db,c.id,'case_from_inquiry',q.need_label,{type:'client',id:client_id}));await db.batch(c.statements);caseId=c.id;}
   await stmt(db,"UPDATE inquiries SET status='handled',client_id=?,handled_at=?,handled_by=? WHERE inquiry_id=?",client_id,now(),admin.staff_id,q.inquiry_id).run();
   link=await portalLink(env,db,caseId);view=await caseView(db,caseId,true);}
@@ -357,8 +358,9 @@ async function handle(req,env) {
  requireThat(b.consent===true,'consent_required');
  const phone=formatMobile(clean(b.phone??'',40,true));requireThat(phone,'invalid_mobile');
  const need=clean(b.need??'',40,true);requireThat(need in NEEDS,'invalid_fields');
+ const other=need==='other'?clean(b.other??'',200):'';if(need==='other')requireThat(other.length>=2,'other_required');
  const tpl=NEEDS[need].template&&await one(db,'SELECT template_id FROM templates WHERE template_id=?',NEEDS[need].template);
- const q={inquiry_id:uid(),name:clean(b.name??'',120,true),contact_name:clean(b.contact_name??'',120),business_number:clean(b.business_number??'',40),phone,email:emailOf(b.email),need,need_label:NEEDS[need].label,template_id:tpl?.template_id||null,note:clean(b.note??'',500)};
+ const q={inquiry_id:uid(),name:clean(b.name??'',120,true),contact_name:clean(b.contact_name??'',120),business_number:clean(b.business_number??'',40),phone,email:emailOf(b.email),need,need_label:other?NEEDS[need].label+': '+other:NEEDS[need].label,template_id:tpl?.template_id||null,note:clean(b.note??'',500)};
  await stmt(db,'INSERT INTO inquiries(inquiry_id,name,contact_name,business_number,phone,email,need,template_id,note,source) VALUES (?,?,?,?,?,?,?,?,?,?)',
   q.inquiry_id,q.name,q.contact_name,q.business_number,phone,q.email,q.need_label,q.template_id,q.note,clean(b.source??'',60)).run();
  return fromInquiry(db,env,q);
@@ -411,10 +413,12 @@ async function handle(req,env) {
  if(path==='/api/settings'&&method==='GET')return settings(db);
  if(path==='/api/settings'&&method==='POST'){adminOnly(me);const b=await body(req),w=Number(b.warning_days),u=Number(b.urgent_days),t=clean(b.whatsapp_template||'',1000);
   requireThat(Number.isInteger(w)&&Number.isInteger(u)&&u>=0&&u<w&&w<=60,'invalid_deadline_days');
+  const dd=b.due_days===undefined||b.due_days===''?Number((await settings(db)).due_days??14):Number(b.due_days);
+  requireThat(Number.isInteger(dd)&&dd>=1&&dd<=90,'invalid_due_days');requireThat(w<dd,'warning_after_due');
   requireThat([...t.matchAll(/\{([^{}]*)\}/g)].every(m=>PLACEHOLDERS.includes(m[1])),'invalid_template_placeholder');
   requireThat(!b.email||/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email));
-  await stmt(db,'UPDATE settings SET office_name=?,office_size=?,manager_name=?,phone=?,email=?,address=?,warning_days=?,urgent_days=?,whatsapp_template=?,updated_at=? WHERE id=1',
-   clean(b.office_name||'',120),clean(b.office_size||'',40),clean(b.manager_name||'',120),clean(b.phone||'',40),clean(b.email||'',254),clean(b.address||'',200),w,u,t,now()).run();return settings(db);}
+  await stmt(db,'UPDATE settings SET office_name=?,office_size=?,manager_name=?,phone=?,email=?,address=?,warning_days=?,urgent_days=?,due_days=?,whatsapp_template=?,updated_at=? WHERE id=1',
+   clean(b.office_name||'',120),clean(b.office_size||'',40),clean(b.manager_name||'',120),clean(b.phone||'',40),clean(b.email||'',254),clean(b.address||'',200),w,u,dd,t,now()).run();return settings(db);}
  if(path==='/api/settings/logo'&&method==='POST'){adminOnly(me);const b=await body(req);
   if(!b.data){await db.batch([stmt(db,'DELETE FROM logo WHERE id=1'),stmt(db,'UPDATE settings SET logo_version=logo_version+1 WHERE id=1')]);return settings(db);}
   let bytes;try{bytes=Uint8Array.from(atob(String(b.data)),ch=>ch.charCodeAt(0));}catch{throw new HttpError(400,'invalid_file');}
@@ -439,7 +443,8 @@ async function handle(req,env) {
  if(path==='/api/catalog'&&method==='POST'){adminOnly(me);const b=await body(req),id=b.document_id||uid();await stmt(db,'INSERT INTO document_catalog(document_id,name,description,active) VALUES (?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET name=excluded.name,description=excluded.description,active=excluded.active',id,clean(b.name,160,true),clean(b.description||'',500),b.active===false?0:1).run();return {document_id:id};}
  if(path==='/api/templates'&&method==='GET'){const rows=await all(db,'SELECT * FROM templates ORDER BY name');for(const r of rows)r.items=await all(db,'SELECT ti.*,dc.name FROM template_items ti JOIN document_catalog dc USING(document_id) WHERE template_id=? ORDER BY position',r.template_id);return rows;}
  if(path==='/api/templates'&&method==='POST'){adminOnly(me);const b=await body(req),id=b.template_id||uid();requireThat(Array.isArray(b.items)&&b.items.length>0&&b.items.length<=40,'requirements_required');
-  const statements=[stmt(db,'INSERT INTO templates VALUES (?,?) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name',id,clean(b.name,120,true)),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)],used=new Set();
+  const kind=b.period_kind===undefined?null:clean(b.period_kind,10,true);if(kind!==null)requireThat(kind in PERIOD_KINDS,'invalid_fields');
+  const statements=[stmt(db,"INSERT INTO templates(template_id,name,period_kind) VALUES (?,?,coalesce(?,'none')) ON CONFLICT(template_id) DO UPDATE SET name=excluded.name,period_kind=coalesce(?,period_kind)",id,clean(b.name,120,true),kind,kind),stmt(db,'DELETE FROM template_items WHERE template_id=?',id)],used=new Set();
   // A document typed by name inside a template joins the shared document library, or reuses the entry with the same name.
   const library=await all(db,'SELECT document_id,name FROM document_catalog');
   for(const [i,r]of b.items.entries()){requireThat(Number.isInteger(r.max_files)&&r.max_files>=1&&r.max_files<=20);let doc=r.document_id;
@@ -448,7 +453,7 @@ async function handle(req,env) {
    requireThat(!used.has(doc),'duplicate_document',409);used.add(doc);
    statements.push(stmt(db,'INSERT INTO template_items VALUES (?,?,?,?,?)',id,doc,r.required?1:0,r.max_files,i));}
   await db.batch(statements);return {template_id:id};}
- const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|opening|email|reconcile|owner|contacts))?$/);
+ const match=path.match(/^\/api\/cases\/([\w-]+)(?:\/(link|revoke-link|review|review-all|status|reminder|opening|email|reconcile|owner|contacts|due))?$/);
  if(match){const id=match[1],action=match[2],c=await ownCase(db,me,id);
  // An admin may hand the case to someone else mid-request. Writes repeat the ownership check in SQL.
  const mine='EXISTS(SELECT 1 FROM cases WHERE case_id=? AND (?=1 OR owner_id=?))',mineArgs=[id,isAdmin(me)?1:0,me.staff_id];
@@ -483,6 +488,10 @@ async function handle(req,env) {
    stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);
   if(done[1].meta.changes===0){await ownCase(db,me,id);active(await one(db,'SELECT status FROM cases WHERE case_id=?',id));throw new HttpError(409,'conflict');}
   return {...await caseView(db,id,true),approved_count:done[1].meta.changes};}
+ if(action==='due'&&method==='POST'){active(c);const b=await body(req),d=clean(b.due_date||'',10);
+  requireThat(/^\d{4}-\d{2}-\d{2}$/.test(d)&&!Number.isNaN(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d,'invalid_due_date');
+  if(d!==c.due_date)await db.batch([stmt(db,`UPDATE cases SET due_date=?,last_activity=? WHERE case_id=? AND ${mine}`,d,now(),id,...mineArgs),event(db,id,'due_changed',ddmmyyyy(c.due_date)+' → '+ddmmyyyy(d),actor)]);
+  return caseView(db,id,true);}
  if(action==='reminder'&&method==='POST'){const view=await caseView(db,id,true),x=await settings(db),link=await portalLink(env,db,id),{missing,text}=reminderText(x,view,link);requireThat(missing.length,'nothing_missing',409);
   await event(db,id,'reminder_prepared',missing.map(r=>r.name).join(', '),actor).run();return {text,link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'השלמת מסמכים — '+view.name};}
  if(action==='opening'&&method==='GET'){const view=await caseView(db,id,true),link=await portalLink(env,db,id);return {text:openingText(await settings(db),view,link),link,email:view.email,phone:view.phone,whatsapp:israeliMobile(view.phone),subject:'מסמכים לתיק '+view.name};}

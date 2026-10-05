@@ -63,7 +63,7 @@ function render(c){if(c.closed){app.innerHTML=`<section class="panel card"><h1>$
  // What the office sent back comes first, then what is missing.
  const todo=reqs.filter(toSend).sort((a,b)=>(b.status==='correction')-(a.status==='correction')||b.required-a.required),done=reqs.filter(r=>!toSend(r));
  const finished=c.status==='client_completed'||c.status==='ready_for_work';
- app.innerHTML=`<section class="client-head"><span class="eyebrow">שלום ${esc(c.contact_name||c.client_name)}</span><h1>${esc(c.name)}</h1>${c.due_date&&!finished?`<p class="muted">עד ${date(c.due_date)}</p>`:''}</section>
+ app.innerHTML=`<section class="client-head"><span class="eyebrow">שלום ${esc(c.contact_name||c.client_name)}</span><h1>${esc(c.name)}</h1>${c.due_date&&!finished?`<p class="muted">הגשת מסמכים עד ${date(c.due_date)}</p>`:''}</section>
 ${finished?`<section class="success done-state" role="status"><span class="completion-tick" aria-hidden="true">✓</span><h2>${c.status==='ready_for_work'?'המשרד אישר את כל המסמכים. תודה!':'קיבלנו הכול.'}</h2>${c.status==='ready_for_work'?'':'<p>המשרד יעבור על המסמכים ויחזור אליך אם משהו חסר.</p>'}</section>`:''}
 ${todo.length?`<section class="doc-group"><h2>נותר לשלוח <span class="count">${todo.length}</span></h2><ul class="doc-list">${todo.map(r=>todoRow(r,locked)).join('')}</ul></section>`:''}
 ${done.length?`<section class="doc-group sent"><h2>נשלח לבדיקה <span class="count">${done.length}</span></h2><ul class="doc-list">${done.map(r=>doneRow(r,locked)).join('')}</ul></section>`:''}`;

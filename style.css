@@ -369,8 +369,23 @@ body:not(:has(.office-shell)) main.client-page { margin-inline: auto; }
 .board-group[data-group=late] h2 .count { background: var(--red-soft); color: var(--red); }
 details.board-group > summary { list-style: none; cursor: pointer; }
 details.board-group > summary::-webkit-details-marker { display: none; }
-details.board-group > summary h2::after { content: '▾'; color: var(--muted); font-size: .9rem; }
-details.board-group[open] > summary h2::after { content: '▴'; }
+/* Every work group folds. A big yellow arrow next to the title: left when closed, down when open. The whole row is the button. */
+.board-group.fold > summary { padding: 4px 0; border-radius: 12px; }
+.board-group.fold > summary h2 { margin-bottom: 0; }
+.board-group.fold > summary h2::before { content: '◀'; display: inline-block; width: 22px; color: var(--primary); font-size: 20px; line-height: 1; text-align: center; }
+.board-group.fold[open] > summary h2::before { content: '▼'; }
+.board-group.fold[open] > summary { margin-bottom: 10px; }
+.board-group.fold > summary:hover h2 { color: var(--primary); }
+.board-group.empty-group h2 { padding-inline-start: 30px; color: var(--muted); }
+/* The submission date is a button that opens the calendar where it stands. */
+.due-inline { position: relative; display: inline-block; }
+.due-inline .due-date { min-height: 32px; padding: 0 2px; color: var(--primary); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.due-picker { position: absolute; inset-inline-start: 0; bottom: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+.period-pick { margin: 0; padding: 0; border: 0; }
+.period-pick legend { margin-bottom: 6px; font-weight: 700; }
+.period-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.period-row select { flex: 1; }
+.period-row > span { min-width: 26px; color: var(--muted); font-weight: 700; }
 .case-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .case-row { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(160px, 1.4fr) minmax(110px, .8fr) auto; align-items: center; gap: 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .case-row .case-name { display: grid; gap: 2px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--text); text-align: right; }
