@@ -83,3 +83,7 @@
 /* The line for "something else" sits in the empty cell next to it. */
 .need-options .other-need:not([hidden]) { display: flex; align-items: center; padding: 0; border: 0; background: none; cursor: auto; }
 .other-need input { width: 100%; min-height: 48px; }
+
+/* Client page: a short hint under a list title, and the way back to this page. */
+.group-hint { margin: -4px 0 10px; font-size: .88rem; }
+.come-back { margin-top: 4px; font-size: .86rem; }

@@ -44,7 +44,7 @@ const noteLine=r=>{const id=r.requirement_id;return openNote===id?`<label class=
 
 function todoRow(r,locked){const id=r.requirement_id,s=sending.get(id),fix=r.status==='correction';
  return `<li class="doc-item todo${fix?' fix':''}" id="req-${esc(id)}">
-<div class="doc-line"><strong>${esc(r.name)}</strong>${r.required?'':'<small class="muted">לא חובה</small>'}</div>
+<div class="doc-line"><strong>${esc(r.name)}</strong></div>
 ${fix&&r.correction_message?`<p class="fix-note"><strong>הערה מהמשרד:</strong> ${esc(r.correction_message)}</p>`:''}
 ${!s&&leftover.get(id)?.length&&!pendingSave(r)?`<p class="sending-line" role="status">עוד ${leftover.get(id).length===1?'קובץ אחד לא נשלח':leftover.get(id).length+' קבצים לא נשלחו'}: ${esc(leftover.get(id).map(f=>f.name).join(', '))} <button type="button" class="text-button" data-resume="${esc(id)}">שליחה</button></p>`:''}${s?`<p class="sending-line" role="status">${s.timer?'נשלח':'שולח'}: ${esc(s.files.map(f=>f.name).join(', '))}${s.timer?` <button type="button" class="text-button" data-cancel="${esc(id)}">ביטול</button>`:'…'}</p>`
  :pendingSave(r)?'<p class="sending-line">הקובץ נשמר אצל המשרד. אין צורך לשלוח שוב.</p>'
@@ -60,13 +60,14 @@ ${leftover.get(id)?.length&&!pendingSave(r)?`<p class="sending-line" role="statu
 
 function render(c){if(c.closed){app.innerHTML=`<section class="panel card"><h1>${esc(c.name)}</h1><p>התיק הושלם, ולכן המסמכים לא מוצגים כאן. לשאלות אפשר לפנות למשרד.</p></section>`;return;}
  const locked=['closed','archived'].includes(c.status),reqs=c.requirements;
- // What the office sent back comes first, then what is missing.
- const todo=reqs.filter(toSend).sort((a,b)=>(b.status==='correction')-(a.status==='correction')||b.required-a.required),done=reqs.filter(r=>!toSend(r));
- const finished=c.status==='client_completed'||c.status==='ready_for_work';
- app.innerHTML=`<section class="client-head"><span class="eyebrow">שלום ${esc(c.contact_name||c.client_name)}</span><h1>${esc(c.name)}</h1>${c.due_date&&!finished?`<p class="muted">הגשת מסמכים עד ${date(c.due_date)}</p>`:''}</section>
-${finished?`<section class="success done-state" role="status"><span class="completion-tick" aria-hidden="true">✓</span><h2>${c.status==='ready_for_work'?'המשרד אישר את כל המסמכים. תודה!':'קיבלנו הכול.'}</h2>${c.status==='ready_for_work'?'':'<p>המשרד יעבור על המסמכים ויחזור אליך אם משהו חסר.</p>'}</section>`:''}
-${todo.length?`<section class="doc-group"><h2>נותר לשלוח <span class="count">${todo.length}</span></h2><ul class="doc-list">${todo.map(r=>todoRow(r,locked)).join('')}</ul></section>`:''}
-${done.length?`<section class="doc-group sent"><h2>נשלח לבדיקה <span class="count">${done.length}</span></h2><ul class="doc-list">${done.map(r=>doneRow(r,locked)).join('')}</ul></section>`:''}`;
+ // Required and optional apart. Each document keeps its place: sending turns it green right there, it never jumps away.
+ const must=reqs.filter(r=>r.required),extra=reqs.filter(r=>!r.required),row=r=>toSend(r)?todoRow(r,locked):doneRow(r,locked);
+ const finished=c.status==='client_completed'||c.status==='ready_for_work',extraLeft=extra.some(toSend);
+ const group=(title,list,hint)=>list.length?`<section class="doc-group"><h2>${title} <span class="count">נשלחו ${list.length-list.filter(toSend).length} מתוך ${list.length}</span></h2>${hint?`<p class="muted group-hint">${hint}</p>`:''}<ul class="doc-list">${list.map(row).join('')}</ul></section>`:'';
+ app.innerHTML=`<section class="client-head"><span class="eyebrow">שלום ${esc(c.contact_name||c.client_name)}</span><h1>${esc(c.name)}</h1>${c.due_date&&!finished?`<p class="muted">הגשת מסמכים עד ${date(c.due_date)}</p>`:''}<p class="muted come-back">אפשר לחזור לדף הזה בכל זמן מהכפתור "להעלאת המסמכים" במייל ששלחנו לך.</p></section>
+${finished?`<section class="success done-state" role="status"><span class="completion-tick" aria-hidden="true">✓</span><h2>${c.status==='ready_for_work'?'המשרד אישר את כל מסמכי החובה. תודה!':'קיבלנו את כל מסמכי החובה. תודה!'}</h2>${c.status==='ready_for_work'?'':'<p>המשרד יעבור עליהם ויחזור אליך אם משהו חסר.</p>'}${extraLeft?'<p>אפשר עדיין לשלוח מסמכים מהרשימה "לפי הצורך", אם הם רלוונטיים לך.</p>':''}</section>`:''}
+${group('מסמכי חובה',must)}
+${group('מסמכים לפי הצורך',extra,'רק אם זה רלוונטי לך. אפשר לשלוח גם אחרי שהמשרד אישר את מסמכי החובה.')}`;
  bind(c);}
 
 function setStatus(rid,text){const p=$('#status-'+CSS.escape(rid));if(p)p.textContent=text;}

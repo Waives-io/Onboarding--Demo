@@ -72,7 +72,8 @@ function reminderText(s,view,link) {
 // The first message, when a case opens: what the office needs and the link. A reminder is a different message (reminderText).
 const ddmm=d=>ddmmyyyy(d).slice(0,5);
 function openingText(s,view,link) {
- const lines=[`שלום ${view.contact_name||view.client_name},`,`פתחנו לך תיק ${view.name}. נצטרך: ${view.requirements.filter(r=>r.required).map(r=>r.name).join(', ')}`,`להעלאה: ${link}`];
+ const numbered=items=>items.map((r,i)=>`${i+1}. ${r.name}`),must=view.requirements.filter(r=>r.required),extra=view.requirements.filter(r=>!r.required);
+ const lines=[`שלום ${view.contact_name||view.client_name},`,`פתחנו לך תיק ${view.name}.`,'',...(must.length?['מסמכי חובה:',...numbered(must),'']:[]),...(extra.length?['מסמכים לפי הצורך (רק אם זה רלוונטי לך):',...numbered(extra),'']:[]),`להעלאה: ${link}`];
  if(view.due_date)lines.push(`הגשת מסמכים עד ${ddmm(view.due_date)}`);
  return withPinHint(lines.join('\n'),view.phone)+(s.office_name?'\n'+s.office_name:'');
 }
@@ -228,6 +229,17 @@ async function fromInquiry(db,env,q) {
  if(sent&&caseId)await db.batch([stmt(db,'INSERT INTO contacts(send_id,case_id,channel,actor_id) VALUES (?,?,?,NULL)',sent,caseId,'email'),
   stmt(db,"INSERT INTO events(event_id,case_id,action,detail) VALUES (?,?,'email_sent',?)",'contact-'+sent,caseId,'פתיחת תיק · '+q.email)]);
  return {ok:true,opened:!!caseId,case_name:view?.name||'',link:link||'',email:q.email,email_sent:!!sent};
+}
+// When the office approves the last required document, the client hears it at once, so they know all is well.
+// Once per case. Optional documents not sent yet are mentioned: the same link still takes them.
+async function approvedEmail(db,env,id) {
+ const view=await caseView(db,id,true);if(view.status!=='ready_for_work'||!view.email)return;
+ if(await one(db,'SELECT 1 FROM events WHERE event_id=?','approved-mail-'+id))return;
+ const x=await settings(db),link=await portalLink(env,db,id),extra=view.requirements.filter(r=>!r.required&&r.status==='missing'&&r.unavailable_note==null);
+ const text=[`שלום ${view.contact_name||view.client_name},`,`המשרד אישר את כל מסמכי החובה בתיק ${view.name}. תודה!`,...(extra.length?['אם יש לך גם מסמכים מהרשימה "לפי הצורך", אפשר להעלות אותם מאותו קישור.']:[]),...(x.office_name?[x.office_name]:[])].join('\n');
+ const sent=await autoEmail(env,{to:view.email,reply_to:x.email||'',subject:'כל מסמכי החובה אושרו · '+view.name+(x.office_name?' · '+x.office_name:''),html:noteHtml(text,link,'לצפייה בתיק')});
+ if(sent)await db.batch([stmt(db,'INSERT INTO contacts(send_id,case_id,channel,actor_id) VALUES (?,?,?,NULL)',sent,id,'email'),
+  stmt(db,"INSERT OR IGNORE INTO events(event_id,case_id,action,detail) VALUES (?,?,'email_sent',?)",'approved-mail-'+id,id,'אישור מסמכי החובה · '+view.email)]);
 }
 async function storeReceipt(db,u,receipt) {
  requireThat(receipt.status==='stored' && receipt.submission_id===u.submission_id && /^[\w-]{5,200}$/.test(receipt.drive_file_id||'') && /^[\w-]{5,200}$/.test(receipt.drive_folder_id||'') && receipt.sheet_updated===true,'storage_unconfirmed',502);
@@ -468,7 +480,7 @@ async function handle(req,env) {
  if(action==='owner'&&method==='POST'){adminOnly(me);const b=await body(req),s=await activeStaff(db,b.staff_id);
   await db.batch([stmt(db,'UPDATE cases SET owner_id=?,owner=? WHERE case_id=?',s.staff_id,s.name,id),event(db,id,'owner_changed',s.name,actor)]);return caseView(db,id,true);}
  active(c);
- if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(r.unavailable_note!=null&&r.status==='missing'||await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle=`NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending') AND ${mine}`,rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,?,?,'staff',? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),me.staff_id,rq,...mineArgs),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq,...mineArgs)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=?,unavailable_note=CASE WHEN ?='correction' THEN NULL ELSE unavailable_note END WHERE requirement_id=? AND ${idle}`,b.status,message,b.status,rq,rq,...mineArgs),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);return caseView(db,id,true);}
+ if(action==='review'&&method==='POST'){const b=await body(req);requireThat(['approved','correction'].includes(b.status));const r=await one(db,'SELECT * FROM requirements WHERE case_id=? AND requirement_id=?',id,b.requirement_id);requireThat(r,'not_found',404);requireThat(r.unavailable_note!=null&&r.status==='missing'||await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='stored'",r.requirement_id),'no_stored_upload',409);await expirePending(db,id);requireThat(!await one(db,"SELECT submission_id FROM uploads WHERE requirement_id=? AND state='pending'",r.requirement_id),'upload_pending',409);const message=b.status==='correction'?clean(b.message,1000,true):'',idle=`NOT EXISTS(SELECT 1 FROM uploads WHERE requirement_id=? AND state='pending') AND ${mine}`,rq=r.requirement_id;const done=await db.batch([stmt(db,`INSERT INTO events(event_id,case_id,action,detail,actor_type,actor_id) SELECT ?,?,?,?,'staff',? WHERE ${idle}`,uid(),id,b.status,r.name+(message?': '+message:''),me.staff_id,rq,...mineArgs),...(b.status==='correction'?[stmt(db,`UPDATE cases SET client_completed_at=NULL,completed_at=NULL WHERE case_id=? AND ${idle}`,id,rq,...mineArgs)]:[]),stmt(db,`UPDATE requirements SET status=?,correction_message=?,unavailable_note=CASE WHEN ?='correction' THEN NULL ELSE unavailable_note END WHERE requirement_id=? AND ${idle}`,b.status,message,b.status,rq,rq,...mineArgs),syncCase(db,id),stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);requireThat(done[b.status==='correction'?2:1].meta.changes===1,'upload_pending',409);await approvedEmail(db,env,id);return caseView(db,id,true);}
  // The office opened WhatsApp or email with the link, or copied it. Retries with the same send_id stay one record.
  if(action==='contacts'&&method==='POST'){const b=await body(req);requireThat(typeof b.send_id==='string'&&/^[0-9a-f-]{36}$/.test(b.send_id),'invalid_fields');requireThat(['whatsapp','email','copy'].includes(b.channel),'invalid_fields');
   const used=await one(db,'SELECT case_id FROM contacts WHERE send_id=?',b.send_id);requireThat(!used||used.case_id===id,'conflict',409);
@@ -487,7 +499,7 @@ async function handle(req,env) {
    syncCase(db,id),
    stmt(db,"UPDATE cases SET completed_at=CASE WHEN status='ready_for_work' THEN coalesce(completed_at,?) ELSE NULL END WHERE case_id=?",now(),id)]);
   if(done[1].meta.changes===0){await ownCase(db,me,id);active(await one(db,'SELECT status FROM cases WHERE case_id=?',id));throw new HttpError(409,'conflict');}
-  return {...await caseView(db,id,true),approved_count:done[1].meta.changes};}
+  await approvedEmail(db,env,id);return {...await caseView(db,id,true),approved_count:done[1].meta.changes};}
  if(action==='due'&&method==='POST'){active(c);const b=await body(req),d=clean(b.due_date||'',10);
   requireThat(/^\d{4}-\d{2}-\d{2}$/.test(d)&&!Number.isNaN(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d,'invalid_due_date');
   if(d!==c.due_date)await db.batch([stmt(db,`UPDATE cases SET due_date=?,last_activity=? WHERE case_id=? AND ${mine}`,d,now(),id,...mineArgs),event(db,id,'due_changed',ddmmyyyy(c.due_date)+' → '+ddmmyyyy(d),actor)]);

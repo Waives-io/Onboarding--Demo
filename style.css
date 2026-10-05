@@ -459,3 +459,13 @@ button.accent:hover { background: rgba(255,218,42,.10); }
 
 /* A status pill above a hero headline (thank-you screens). */
 .welcome > .badge { margin-bottom: 14px; }
+
+/* Case page: required and optional documents apart. Approved ones stay in place, small and green; an optional one not sent is quiet. */
+.req-section { margin: 0 0 18px; }
+.req-section-title { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; font-size: 1.1rem; }
+.req-section-title .count { padding: 0 8px; border-radius: 30px; background: var(--surface-soft); color: var(--muted); font-size: .78rem; }
+.requirement-card.is-approved { padding-block: 12px; border-color: rgba(110,214,154,.3); background: var(--green-soft); }
+.requirement-card.is-approved .file-list small, .requirement-card.is-approved .doc-preview { display: none; }
+.requirement-card.not-sent { padding-block: 12px; opacity: .75; }
+.requirement-card.not-sent .file-list { display: none; }
+.badge.muted { background: var(--surface-soft); color: var(--muted); }

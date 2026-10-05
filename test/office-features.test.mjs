@@ -252,7 +252,8 @@ test('a new case has its own opening message, separate from the reminder', async
   assert.equal(r.status, 200);
   const lines = r.body.text.split('\n');
   assert.equal(lines[0], 'שלום Test Client,');
-  assert.equal(lines[1], 'פתחנו לך תיק Monthly. נצטרך: Bank, Sales');
+  assert.equal(lines[1], 'פתחנו לך תיק Monthly.');
+  assert.match(r.body.text, /\nמסמכי חובה:\n1\. Bank\n2\. Sales\n\nמסמכים לפי הצורך \(רק אם זה רלוונטי לך\):\n1\. Extra\n/);
   assert.match(r.body.text, /להעלאה: https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}\nהגשת מסמכים עד 04\/10\nלכניסה: 4 הספרות האחרונות של הנייד שלך\.\nמשרד כהן$/);
   // The office's reminder wording never leaks into the opening message, and opening it records no reminder.
   assert.doesNotMatch(r.body.text, /תזכורת/);
@@ -271,7 +272,7 @@ test('opening and reminder emails go through Make and are recorded only when Mak
   const [m] = sent;
   assert.equal(m.action, 'send_email'); assert.equal(m.bridge_key, 'k'.repeat(32)); assert.equal(m.to, 'dana@example.com'); assert.equal(m.reply_to, 'office@example.com');
   assert.equal(m.subject, 'מסמכים לתיק Monthly · משרד כהן');
-  assert.match(m.html, /^<div dir="rtl"/); assert.match(m.html, /שלום דנה,<br>פתחנו לך תיק Monthly\. נצטרך: Bank, Sales/); assert.match(m.html, /href="https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}"/);
+  assert.match(m.html, /^<div dir="rtl"/); assert.match(m.html, /שלום דנה,<br>פתחנו לך תיק Monthly\.<br><br>מסמכי חובה:<br>1\. Bank<br>2\. Sales/); assert.match(m.html, /href="https:\/\/waives-io\.github\.io\/Onboarding--Demo\/client\.html#[A-Za-z0-9]{10}"/);
   let view = (await call(e, '/api/cases/case1')).body;
   assert.equal(view.contact_count, 1); assert.equal(view.last_channel, 'email');
   assert.equal(view.events.find(x => x.action === 'email_sent').detail, 'פתיחת תיק · dana@example.com');
@@ -406,4 +407,21 @@ test('days to submit come from the settings and stay after the warning', async (
   assert.equal((await call(e, '/api/settings', { method: 'POST', data: { ...base, due_days: 7 } })).body.error, 'warning_after_due');
   // A save that does not mention the days keeps them.
   assert.equal((await call(e, '/api/settings', { method: 'POST', data: base })).body.due_days, 10);
+});
+
+test('approving the last required document emails the client once, and mentions optional documents still open', async t => {
+  const db = await seed(), e = { ...env(db), MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/test', MAKE_BRIDGE_KEY: 'k'.repeat(32), PORTAL_BRIDGE_ENABLED: 'true' };
+  db.raw.prepare("UPDATE clients SET email='dana@example.com',contact_name='דנה' WHERE client_id='cl1'").run();
+  db.raw.prepare("UPDATE requirements SET status='uploaded' WHERE requirement_id IN ('r1','r2')").run();
+  for (const r of ['r1', 'r2']) db.raw.prepare("INSERT INTO uploads(submission_id,requirement_id,filename,mime_type,size,content_hash,version,state) VALUES (?,?,'a.pdf','application/pdf',10,'h',1,'stored')").run('s-' + r, r);
+  const sent = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => { const m = Object.fromEntries(init.body); sent.push(m); return new Response(JSON.stringify({ status: 'sent', send_id: m.send_id }), { headers: { 'content-type': 'application/json' } }); });
+  await call(e, '/api/cases/case1/review', { method: 'POST', data: { requirement_id: 'r1', status: 'approved' } });
+  assert.equal(sent.length, 0);
+  const v = (await call(e, '/api/cases/case1/review', { method: 'POST', data: { requirement_id: 'r2', status: 'approved' } })).body;
+  assert.equal(v.status, 'ready_for_work');
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].subject, /^כל מסמכי החובה אושרו · Monthly/);
+  assert.match(sent[0].html, /המשרד אישר את כל מסמכי החובה בתיק Monthly/); assert.match(sent[0].html, /לפי הצורך/);
+  assert.ok(v.events.some(x => x.action === 'email_sent' && x.detail.startsWith('אישור מסמכי החובה')));
 });
