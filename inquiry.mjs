@@ -1,6 +1,6 @@
 import {$,esc,api} from './common.mjs';
 // The public landing page. A visitor leaves their details and what they need; the office opens a case from it.
-api('/api/branding').then(b=>{if(b.office_name)$('#office-name').textContent=b.office_name;if(b.logo_version)$('.brand-mark').innerHTML=`<img src="${esc(window.PORTAL_CONFIG.api)}/api/logo?v=${Number(b.logo_version)}" alt="">`;}).catch(()=>{});
+api('/api/branding').then(b=>{if(b.office_name)$('#office-name').textContent=b.office_name;}).catch(()=>{});
 const form=$('#inquiry');
 // Israeli mobile: spaces, dashes and brackets are ignored; +972, 00972 and 972 become 0.
 const mobile=v=>{const d=String(v).replace(/[\s\-()]/g,'').replace(/^(\+972|00972|972)/,'0');return /^05\d{8}$/.test(d)?d.slice(0,3)+'-'+d.slice(3):null;};
