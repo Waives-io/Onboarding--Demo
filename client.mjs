@@ -27,7 +27,7 @@ function pinForm(error=''){app.innerHTML=`<section class="panel card pin-card"><
  $('#pin-form').onsubmit=e=>{e.preventDefault();submit();};boxes[0].focus();}
 
 // The office's name and logo head the page: the client knows their accountant, not the system.
-api('/api/branding').then(b=>{if(b.office_name){$('#office-name').textContent=b.office_name;document.title=b.office_name+' · המסמכים שלי';}if(b.logo_version)$('.brand-mark').innerHTML=`<img src="${esc(window.PORTAL_CONFIG.api)}/api/logo?v=${Number(b.logo_version)}" alt="">`;}).catch(()=>{});
+api('/api/branding').then(b=>{if(b.office_name){$('#office-name').textContent=b.office_name;document.title=b.office_name+' · המסמכים שלי';}if(b.logo_version)$('.brand-mark').classList.remove('app-mark');if(b.logo_version)$('.brand-mark').innerHTML=`<img src="${esc(window.PORTAL_CONFIG.api)}/api/logo?v=${Number(b.logo_version)}" alt="">`;}).catch(()=>{});
 addEventListener('beforeunload',e=>{if(sending.size){e.preventDefault();e.returnValue='';}});
 
 // How many more files a document takes. A correction replaces with exactly one file.

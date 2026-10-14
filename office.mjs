@@ -31,7 +31,7 @@ async function login(){let setup=false;try{setup=(await api('/api/auth-state')).
  :`<section class="panel login"><span class="eyebrow">סביבת המשרד</span><h1>מסמכים בזמן – כניסה</h1><p class="muted">כל אחד בצוות נכנס עם הדוא״ל והסיסמה שלו.</p><form id="login"><label>דוא״ל<input name="email" type="email" autocomplete="username" required></label><label>סיסמה<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">כניסה</button><p class="muted">שכחת סיסמה? מנהל המשרד יכול לקבוע לך סיסמה חדשה.</p><p id="login-error" class="error" role="alert"></p></form></section>`;
  bindForm('#login',async b=>{const r=await api(setup?'/api/setup':'/api/login',{method:'POST',data:b});token=r.token;sessionStorage.setItem('office_session',token);await load();});}
 
-function applyBranding(b){if(b.office_name)$('#office-name').textContent=b.office_name;const mark=$('.brand-mark');mark.innerHTML=b.logo_version?`<img src="${esc(window.PORTAL_CONFIG.api)}/api/logo?v=${Number(b.logo_version)}" alt="">`:'✓';}
+function applyBranding(b){if(b.office_name)$('#office-name').textContent=b.office_name;}
 async function load(){[me,cases,clients,catalog,templates,settings,staff,inquiries]=await Promise.all(['/api/me','/api/cases','/api/clients','/api/catalog','/api/templates','/api/settings','/api/staff','/api/inquiries'].map(p=>call(p)));applyBranding(settings);
  // A manager's menu has no office-wide pages. The server refuses them anyway.
  document.querySelectorAll('[data-view]').forEach(b=>b.hidden=ADMIN_VIEWS.includes(b.dataset.view)&&!isAdmin());if(ADMIN_VIEWS.includes(view)&&!isAdmin())view='cases';
