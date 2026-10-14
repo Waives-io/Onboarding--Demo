@@ -282,11 +282,12 @@ async function handle(req,env) {
  }
  if(path==='/api/login'&&method==='POST') {
  const b=await body(req);await limited(db,ip,30);
- const email=typeof b.email==='string'?b.email.trim().toLowerCase().slice(0,254):'',account=await limited(db,'account:'+email,10);
+ // A demo: wrong passwords never lock the account itself, so nobody can lock the office out. Each address still gets 30 tries per 15 minutes.
+ const email=typeof b.email==='string'?b.email.trim().toLowerCase().slice(0,254):'';
  const s=await one(db,'SELECT staff_id,pw FROM staff WHERE email=? AND active=1',email);
  const ok=await verify(typeof b.password==='string'?b.password.slice(0,200):'',s?.pw);
  requireThat(s&&ok,'unauthorized',401);
- await stmt(db,'DELETE FROM login_limits WHERE bucket=?',account).run();return {token:await newSession(db,s.staff_id)};
+ return {token:await newSession(db,s.staff_id)};
  }
  if(path==='/api/storage-receipt'&&method==='POST') {
  requireThat(env.MAKE_BRIDGE_KEY?.length>=32 && await hash(req.headers.get('X-Bridge-Key')||'')===await hash(env.MAKE_BRIDGE_KEY),'unauthorized',401);
