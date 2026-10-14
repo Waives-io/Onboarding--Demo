@@ -58,9 +58,12 @@ test('personal login: right password, wrong password, unknown email, lockout', a
   assert.equal((await call(e, '/api/me', { token: ok.body.token })).body.staff_id, 'm1');
   assert.equal((await call(e, '/api/login', { method: 'POST', data: { email: 'm1@x.test', password: 'nope nope' } })).body.error, 'unauthorized');
   assert.equal((await call(e, '/api/login', { method: 'POST', data: { email: 'ghost@x.test', password: 'nope nope' } })).body.error, 'unauthorized');
-  // Ten tries per account, whatever the address.
+  // Wrong guesses from many addresses never lock the account: the right password still works.
+  for (let i = 0; i < 15; i++) await call(e, '/api/login', { method: 'POST', ip: '9.9.9.' + i, data: { email: 'm1@x.test', password: 'guess ' + i } });
+  assert.equal((await call(e, '/api/login', { method: 'POST', ip: '7.7.7.7', data: { email: 'm1@x.test', password: 'correct horse' } })).status, 200);
+  // One address still gets 30 tries per 15 minutes.
   let last;
-  for (let i = 0; i < 11; i++) last = await call(e, '/api/login', { method: 'POST', ip: '9.9.9.' + i, data: { email: 'm2@x.test', password: 'guess ' + i } });
+  for (let i = 0; i < 31; i++) last = await call(e, '/api/login', { method: 'POST', ip: '8.8.8.8', data: { email: 'm2@x.test', password: 'guess ' + i } });
   assert.equal(last.body.error, 'too_many_attempts');
 });
 
