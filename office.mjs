@@ -1,6 +1,12 @@
 import {$,esc,status,badge,date,toast,api,field,dialog,bindForm,progress,deadlineLabel,dateInput,bindDates,setDate} from './common.mjs';
 import {groupOf,PERIOD_KINDS,MONTHS,defaultPeriod,periodOf,alignRange,yearChoices,caseName,addDays} from './board.mjs';
 let token=sessionStorage.getItem('office_session')||'',inquiries=[],cases=[],clients=[],catalog=[],templates=[],settings={},staff=[],me={},view='cases';
+// Every password field gets an eye, to check what was typed. Fields added later (dialogs) get one too.
+const EYE='<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+function addEyes(){document.querySelectorAll('input[type=password]:not([data-eye])').forEach(i=>{i.dataset.eye='1';const w=document.createElement('span');w.className='pw-field';i.replaceWith(w);w.append(i);
+ const b=document.createElement('button');b.type='button';b.className='pw-eye';b.innerHTML=EYE;b.setAttribute('aria-label','הצגת הסיסמה');b.setAttribute('aria-pressed','false');
+ b.onclick=()=>{const show=i.type==='password';i.type=show?'text':'password';b.setAttribute('aria-pressed',String(show));b.setAttribute('aria-label',show?'הסתרת הסיסמה':'הצגת הסיסמה');i.focus();};w.append(b);});}
+new MutationObserver(addEyes).observe(document.body,{childList:true,subtree:true});
 const call=(path,data)=>api(path,{token,...(data!==undefined?{method:'POST',data}:{})});
 const app=$('#app');
 const ACTIVE=['collecting','action_required','client_completed','ready_for_work'];
@@ -22,7 +28,7 @@ const ADMIN_VIEWS=['templates','documents','settings','staff'];
 // While no admin exists, the office code opens a one-time form that creates the first admin. After that everyone signs in with their own email.
 async function login(){let setup=false;try{setup=(await api('/api/auth-state')).setup_required;}catch{}
  app.innerHTML=setup?`<section class="panel login"><span class="eyebrow">הגדרה ראשונה</span><h1>יוצרים את חשבון מנהל המשרד</h1><p class="muted">פעם אחת בלבד. קוד המשרד מאשר שזה אתם. אחר כך כל אחד בצוות נכנס עם הדוא״ל והסיסמה שלו.</p><form id="login">${field('code','קוד המשרד','password','',true)}${field('name','השם שלך','text','',true)}${field('email','דוא״ל','email','',true)}<label>סיסמה<input name="password" type="password" minlength="8" autocomplete="new-password" required><small class="muted">8 תווים לפחות.</small></label><button class="primary">יצירת החשבון וכניסה</button><p id="login-error" class="error" role="alert"></p></form></section>`
- :`<section class="panel login"><span class="eyebrow">סביבת המשרד</span><h1>נכנסים למסמכים בזמן</h1><p class="muted">כל אחד בצוות נכנס עם הדוא״ל והסיסמה שלו.</p><form id="login"><label>דוא״ל<input name="email" type="email" autocomplete="username" required></label><label>סיסמה<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">כניסה</button><p class="muted">שכחת סיסמה? מנהל המשרד יכול לקבוע לך סיסמה חדשה.</p><p id="login-error" class="error" role="alert"></p></form></section>`;
+ :`<section class="panel login"><span class="eyebrow">סביבת המשרד</span><h1>מסמכים בזמן – כניסה</h1><p class="muted">כל אחד בצוות נכנס עם הדוא״ל והסיסמה שלו.</p><form id="login"><label>דוא״ל<input name="email" type="email" autocomplete="username" required></label><label>סיסמה<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">כניסה</button><p class="muted">שכחת סיסמה? מנהל המשרד יכול לקבוע לך סיסמה חדשה.</p><p id="login-error" class="error" role="alert"></p></form></section>`;
  bindForm('#login',async b=>{const r=await api(setup?'/api/setup':'/api/login',{method:'POST',data:b});token=r.token;sessionStorage.setItem('office_session',token);await load();});}
 
 function applyBranding(b){if(b.office_name)$('#office-name').textContent=b.office_name;const mark=$('.brand-mark');mark.innerHTML=b.logo_version?`<img src="${esc(window.PORTAL_CONFIG.api)}/api/logo?v=${Number(b.logo_version)}" alt="">`:'✓';}
