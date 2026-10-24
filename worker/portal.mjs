@@ -280,6 +280,12 @@ async function handle(req,env) {
  const id=uid(),done=await stmt(db,"INSERT INTO staff(staff_id,name,email,role,pw) SELECT ?,?,?,'admin',? WHERE NOT EXISTS(SELECT 1 FROM staff WHERE role='admin' AND active=1)",id,clean(b.name,120,true),emailOf(b.email),await hashPassword(b.password)).run();
  requireThat(done.meta.changes===1,'already_set_up',409);return {token:await newSession(db,id)};
  }
+ // Demo mode (video capture): signs in as the office admin without a password. Only on a local worker with DEMO_MODE set.
+ if(path==='/api/demo-session'&&method==='POST') {
+ requireThat(env.DEMO_MODE==='true'&&['localhost','127.0.0.1'].includes(new URL(req.url).hostname),'not_found',404);
+ const s=await one(db,"SELECT staff_id FROM staff WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1");requireThat(s,'not_found',404);
+ return {token:await newSession(db,s.staff_id)};
+ }
  if(path==='/api/login'&&method==='POST') {
  const b=await body(req);await limited(db,ip,30);
  // A demo: wrong passwords never lock the account itself, so nobody can lock the office out. Each address still gets 30 tries per 15 minutes.

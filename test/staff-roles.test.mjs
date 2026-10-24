@@ -218,3 +218,14 @@ test('closing a request puts it in the archive, and it can come back', async () 
   const details = db.raw.prepare("SELECT detail FROM events WHERE case_id='case1' AND action='case_status' ORDER BY rowid").all().map(r => r.detail);
   assert.deepEqual(details, ['archived', 'reopen', 'archived', 'reopen']);
 });
+
+test('demo mode signs in without a password only on a local worker with DEMO_MODE', async () => {
+  const db = await office(), demo = { ...env(db), DEMO_MODE: 'true' };
+  const post = (e, base) => worker.fetch(new Request(base + '/api/demo-session', { method: 'POST' }), e);
+  assert.equal((await post(demo, 'https://worker.example')).status, 404);
+  assert.equal((await post(env(db), 'http://127.0.0.1:8787')).status, 404);
+  const ok = await post(demo, 'http://127.0.0.1:8787');
+  assert.equal(ok.status, 200);
+  const { token } = await ok.json();
+  assert.equal((await call(demo, '/api/me', { token })).body.role, 'admin');
+});

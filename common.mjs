@@ -1,4 +1,6 @@
 export const $=s=>document.querySelector(s);
+// Demo mode for recording videos: only on localhost with ?demo in the address. The live site never has it.
+export const DEMO=['localhost','127.0.0.1'].includes(location.hostname)&&new URLSearchParams(location.search).has('demo');
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Office words name the next step and who owns it. The client sees the same states from their side (clientStatus).
 export const status={collecting:'ממתין ללקוח',action_required:'נדרש תיקון',client_completed:'מוכן לבדיקה',ready_for_work:'המסמכים אושרו',closed:'בארכיון',archived:'בארכיון',missing:'חסר',uploaded:'מחכה לבדיקה',correction:'נדרש תיקון',approved:'אושר',pending:'ממתין לאישור שמירה',stored:'נשמר',failed:'השמירה נכשלה'};

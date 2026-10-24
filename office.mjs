@@ -1,4 +1,4 @@
-import {$,esc,status,badge,date,toast,api,field,dialog,bindForm,progress,deadlineLabel,dateInput,bindDates,setDate} from './common.mjs';
+import {DEMO,$,esc,status,badge,date,toast,api,field,dialog,bindForm,progress,deadlineLabel,dateInput,bindDates,setDate} from './common.mjs';
 import {groupOf,PERIOD_KINDS,MONTHS,defaultPeriod,periodOf,alignRange,yearChoices,caseName,addDays} from './board.mjs';
 let token=sessionStorage.getItem('office_session')||'',inquiries=[],cases=[],clients=[],catalog=[],templates=[],settings={},staff=[],me={},view='cases';
 // Every password field gets an eye, to check what was typed. Fields added later (dialogs) get one too.
@@ -250,7 +250,7 @@ ${isAdmin()&&chosen()&&k.items.some(i=>i.added&&i.on)?`<label class="save-type">
 // Right after a case opens, the opening message goes to the client by email at once. WhatsApp stays one tap away.
 // If the client has no email or the email fails, the office gets the regular send window instead.
 const localLink=(text,link)=>{const local=location.hostname==='localhost'||location.hostname==='127.0.0.1';return local?text.split(link).join(location.origin+'/client.html#'+link.split('#')[1]):text;};
-async function openedDialog(caseId){const c=cases.find(x=>x.case_id===caseId)||await call('/api/cases/'+caseId),person=clients.find(x=>x.client_id===c.client_id)?.contact_name||c.client_name;
+async function openedDialog(caseId){if(DEMO)return sendDialog(caseId,true,'whatsapp');const c=cases.find(x=>x.case_id===caseId)||await call('/api/cases/'+caseId),person=clients.find(x=>x.client_id===c.client_id)?.contact_name||c.client_name;
  if(!c.email)return sendDialog(caseId,true);
  dialog('התיק נפתח',`<p role="status" id="opened-status">שולחים ל${esc(person)} מייל עם הקישור…</p><div class="actions" id="opened-actions"></div>`);
  try{await call('/api/cases/'+caseId+'/email',{kind:'opening',send_id:crypto.randomUUID()});}catch(e){if($('#opened-status')){toast(e.message);sendDialog(caseId,true,'whatsapp').catch(err=>toast(err.message));}return;}
@@ -287,7 +287,7 @@ async function sendDialog(caseId,fresh=false,prefer=''){
   if(k==='whatsapp')go.target='_blank';else go.removeAttribute('target');go.href=target();};
  area.oninput=()=>{if(channel)go.href=target();};
  document.querySelectorAll('[data-channel]').forEach(b=>b.onclick=()=>choose(b.dataset.channel));
- go.onclick=async e=>{if(channel==='email'){e.preventDefault();if(go.getAttribute('aria-disabled')==='true')return;go.setAttribute('aria-disabled','true');go.textContent='שולח…';
+ go.onclick=async e=>{if(DEMO&&channel==='whatsapp'){e.preventDefault();toast('נשלח ב־WhatsApp');$('#modal').close();recordContact(caseId,channel);return;}if(channel==='email'){e.preventDefault();if(go.getAttribute('aria-disabled')==='true')return;go.setAttribute('aria-disabled','true');go.textContent='שולח…';
    try{await call('/api/cases/'+caseId+'/email',{kind:fresh?'opening':'reminder',send_id:emailId});toast('המייל נשלח ל־'+mail);$('#modal').close();cases=await call('/api/cases');if(view==='cases'&&$('#rows'))render();}catch(err){toast(err.message);go.removeAttribute('aria-disabled');choose('email');}return;}
   if(channel==='copy'){e.preventDefault();try{await navigator.clipboard.writeText(area.value);}catch{toast('לא ניתן להעתיק. אפשר לסמן את ההודעה ולהעתיק ידנית.');return;}toast('ההודעה הועתקה');}
   else toast(channel==='whatsapp'?'WhatsApp נפתח. שולחים את ההודעה משם.':'טיוטת הדוא״ל נפתחה. שולחים אותה משם.');
@@ -396,4 +396,5 @@ $('#logout').onclick=async()=>{try{await call('/api/logout',{});}finally{token='
 // The menu always shows fresh data, so work done a moment ago (a review, a contact) is already in the list.
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{if(!token)return;view=b.dataset.view;load().catch(e=>toast(e.message));});
 api('/api/branding').then(applyBranding).catch(()=>{});
-if(token)load().catch(()=>{token='';sessionStorage.removeItem('office_session');login();});else login();
+const demoLogin=async()=>{token=(await api('/api/demo-session',{method:'POST',data:{}})).token;sessionStorage.setItem('office_session',token);await load();};
+if(token)load().catch(()=>{token='';sessionStorage.removeItem('office_session');DEMO?demoLogin().catch(login):login();});else if(DEMO)demoLogin().catch(()=>login());else login();
