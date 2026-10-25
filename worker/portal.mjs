@@ -182,6 +182,8 @@ async function caseStatements(db,b,env,me,owner) {
 function bridge(env) {
  const url=new URL(env.LOCAL_BRIDGE_URL||env.MAKE_WEBHOOK_URL||'https://invalid.invalid');
  const localBridge=env.LOCAL_BRIDGE_URL && ['127.0.0.1','localhost'].includes(url.hostname) && url.protocol==='http:';
+ // Demo mode never reaches the real Make scenario (Drive, Sheets, email): only the local stand-in.
+ requireThat(env.DEMO_MODE!=='true'||localBridge,'not_configured',503);
  requireThat((localBridge || url.protocol==='https:' && /^hook(?:\.[a-z0-9-]+)?\.make\.com$/.test(url.hostname)) && !url.search && !url.hash && !url.username,'not_configured',503);
  requireThat(env.MAKE_BRIDGE_KEY?.length>=32 && env.PORTAL_BRIDGE_ENABLED==='true','integration_not_ready',503);
  return url;
@@ -280,9 +282,12 @@ async function handle(req,env) {
  const id=uid(),done=await stmt(db,"INSERT INTO staff(staff_id,name,email,role,pw) SELECT ?,?,?,'admin',? WHERE NOT EXISTS(SELECT 1 FROM staff WHERE role='admin' AND active=1)",id,clean(b.name,120,true),emailOf(b.email),await hashPassword(b.password)).run();
  requireThat(done.meta.changes===1,'already_set_up',409);return {token:await newSession(db,id)};
  }
+ if(path==='/api/demo-check'&&method==='GET'){let local=false;try{local=env.DEMO_MODE==='true'&&['localhost','127.0.0.1'].includes(new URL(req.url).hostname)&&!!bridge(env);}catch{}return {demo:local};}
  // Demo mode (video capture): signs in as the office admin without a password. Only on a local worker with DEMO_MODE set.
  if(path==='/api/demo-session'&&method==='POST') {
  requireThat(env.DEMO_MODE==='true'&&['localhost','127.0.0.1'].includes(new URL(req.url).hostname),'not_found',404);
+ // The hostname says nothing about the database behind it. A database with any real staff email (not *.example.com) is refused.
+ requireThat(!await one(db,"SELECT 1 FROM staff WHERE lower(email) NOT LIKE '%@example.com' AND lower(email) NOT LIKE '%.example.com'"),'not_found',404);
  const s=await one(db,"SELECT staff_id FROM staff WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1");requireThat(s,'not_found',404);
  return {token:await newSession(db,s.staff_id)};
  }

@@ -221,6 +221,7 @@ test('closing a request puts it in the archive, and it can come back', async () 
 
 test('demo mode signs in without a password only on a local worker with DEMO_MODE', async () => {
   const db = await office(), demo = { ...env(db), DEMO_MODE: 'true' };
+  db.raw.prepare("UPDATE staff SET email=staff_id||'@office.example.com'").run();
   const post = (e, base) => worker.fetch(new Request(base + '/api/demo-session', { method: 'POST' }), e);
   assert.equal((await post(demo, 'https://worker.example')).status, 404);
   assert.equal((await post(env(db), 'http://127.0.0.1:8787')).status, 404);
@@ -228,4 +229,14 @@ test('demo mode signs in without a password only on a local worker with DEMO_MOD
   assert.equal(ok.status, 200);
   const { token } = await ok.json();
   assert.equal((await call(demo, '/api/me', { token })).body.role, 'admin');
+  // A database with a real staff email is never opened this way, even on a local demo worker.
+  db.raw.prepare("UPDATE staff SET email='galli@waives.io' WHERE staff_id='m1'").run();
+  assert.equal((await post(demo, 'http://127.0.0.1:8787')).status, 404);
+});
+
+test('demo mode refuses the real Make scenario', async () => {
+  const db = await office(), e = { ...env(db), DEMO_MODE: 'true', MAKE_BRIDGE_KEY: 'k'.repeat(32), MAKE_WEBHOOK_URL: 'https://hook.eu1.make.com/abc' };
+  const check = base => worker.fetch(new Request(base + '/api/demo-check'), e).then(r => r.json());
+  assert.equal((await check('http://127.0.0.1:8787')).demo, false);
+  assert.equal((await check('http://127.0.0.1:8787').then(() => worker.fetch(new Request('http://127.0.0.1:8787/api/demo-check'), { ...e, LOCAL_BRIDGE_URL: 'http://127.0.0.1:8790' })).then(r => r.json())).demo, true);
 });

@@ -4,6 +4,10 @@
 import {readFile} from 'node:fs/promises';
 const [api='http://127.0.0.1:8787',code]=process.argv.slice(2);
 if(!code)throw new Error('office code missing');
+// Only ever a worker on this machine, never a deployed one.
+if(!['127.0.0.1','localhost'].includes(new URL(api).hostname))throw new Error('demo seed runs only against a local worker');
+const health=await (await fetch(api+'/api/demo-check')).json().catch(()=>({}));
+if(!health.demo)throw new Error('the worker is not in demo mode with the local bridge');
 const pdf=await readFile(new URL('../test/fixtures/bank.pdf',import.meta.url));
 let token='';
 async function call(path,data,headers={}){const r=await fetch(api+path,{method:data===undefined?'GET':'POST',headers:{...(token?{Authorization:'Bearer '+token}:{}),...(data instanceof FormData||data===undefined?{}:{'Content-Type':'application/json'}),...headers},body:data instanceof FormData||data===undefined?data:JSON.stringify(data)});
