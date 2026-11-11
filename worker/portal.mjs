@@ -1,4 +1,3 @@
-import legacy from './intake.mjs';
 import {PERIOD_KINDS,defaultPeriod,periodOf,caseName,addDays} from '../board.mjs';
 import {HttpError,requireThat,clean,hash,randomToken,caseToken,caseLinkToken,localDate,deadlineState,israeliMobile,caseProgress,docCounts,periodText,validateFile,toCSV,validPassword,hashPassword,checkPassword,validPhone,phonePin,formatMobile} from './domain.mjs';
 const ORIGIN='https://waives-io.github.io';
@@ -532,7 +531,6 @@ async function handle(req,env) {
  throw new HttpError(404,'not_found');
 }
 export default {async fetch(req,env){const path=new URL(req.url).pathname;
- if(path==='/api/intake')return legacy.fetch(req,env);
  const target=new URL(req.url),origin=req.headers.get('Origin')||'';
  const localTarget=['localhost','127.0.0.1'].includes(target.hostname);
  const localOrigin=localTarget && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);

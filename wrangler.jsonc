@@ -16,6 +16,6 @@
     "PORTAL_BRIDGE_ENABLED": "true"
   },
   "secrets": {
-    "required": ["MAKE_WEBHOOK_URL", "INTAKE_DEMO_CODE", "OFFICE_CODE", "PORTAL_LINK_KEY", "MAKE_BRIDGE_KEY"]
+    "required": ["MAKE_WEBHOOK_URL", "OFFICE_CODE", "PORTAL_LINK_KEY", "MAKE_BRIDGE_KEY"]
   }
 }
