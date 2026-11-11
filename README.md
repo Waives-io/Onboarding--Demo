@@ -7,15 +7,14 @@
 - דף הבית: `https://waives-io.github.io/Onboarding--Demo/`
 - סביבת המשרד: `https://waives-io.github.io/Onboarding--Demo/office.html`
 - פורטל לקוח: קישור אישי שנוצר מתוך התיק ומסתיים ב־`client.html#<token>`
-- טופס הקליטה המקורי (הגרסה הראשונה של הדמו, לא מקושר מדף הבית): `https://waives-io.github.io/Onboarding--Demo/upload.html`
 - API: `https://waives-onboarding-intake.autumn-glitter-1f91.workers.dev`
 
 יש להשתמש במסמכים ובפרטי לקוחות פיקטיביים בלבד.
 
 ## מבנה המערכת
 
-- GitHub Pages מגיש את `office.html`, `client.html` ו־`upload.html`.
-- Cloudflare Worker ב־`worker/portal.mjs` מספק את ה־API. הנתיב `/api/intake` ממשיך להפעיל את `worker/intake.mjs` הקיים.
+- GitHub Pages מגיש את `index.html`, `office.html`, `client.html` ו־`inquiry.html`.
+- Cloudflare Worker ב־`worker/portal.mjs` מספק את ה־API.
 - Cloudflare D1 הוא מקור האמת ללקוחות, תיקים, דרישות, העלאות, אירועים והתחברויות משרד.
 - Make שומר קובץ ב־Google Drive, מוסיף שורה ל־Google Sheets ומחזיר אישור שמירה. ה־Worker מסמן העלאה כ־`stored` רק לאחר שקיבל מזהי Drive ואישור עדכון גיליון.
 - קובץ נשמר בתיקיית דרישה. תיקון נשלח לאותה תיקייה ונרשם כגרסה חדשה.
@@ -104,7 +103,7 @@ node --check client.mjs
 git diff --check
 ```
 
-הבדיקות מכסות יצירת token לתיק, חישוב סטטוסים, CSV, אימות קבצים, ה־intake הקיים, CORS, אימות גישה והתנהגות כאשר D1 אינו מוגדר. קובצי הבדיקה ב־`test/fixtures/` סינתטיים.
+הבדיקות מכסות יצירת token לתיק, חישוב סטטוסים, CSV, אימות קבצים, CORS, אימות גישה והתנהגות כאשר D1 אינו מוגדר. קובצי הבדיקה ב־`test/fixtures/` סינתטיים.
 
 ## פריסה
 
